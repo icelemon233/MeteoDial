@@ -1,0 +1,162 @@
+{
+  "bohai": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2023-12-20",
+    "sourceFrame": "2023-12-20.jpg",
+    "sourceImageBounds": [
+      116,
+      34,
+      126,
+      42
+    ],
+    "cropPixels": [
+      0,
+      126,
+      840,
+      546
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "bohai22": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2022-12-22",
+    "sourceFrame": "2022-12-22.jpg",
+    "sourceImageBounds": [
+      116,
+      34,
+      126,
+      42
+    ],
+    "cropPixels": [
+      0,
+      126,
+      840,
+      546
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "doksuri": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2023-07-26",
+    "sourceFrame": "2023-07-26.jpg",
+    "sourceImageBounds": [
+      110,
+      11,
+      133,
+      32
+    ],
+    "cropPixels": [
+      64,
+      294,
+      738,
+      631
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "ridge": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2022-08-18",
+    "sourceFrame": "2022-08-18.jpg",
+    "sourceImageBounds": [
+      94,
+      19,
+      135,
+      40
+    ],
+    "cropPixels": [
+      88,
+      76,
+      424,
+      245
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "trough": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2022-02-19",
+    "sourceFrame": "2022-02-19.jpg",
+    "sourceImageBounds": [
+      77,
+      14,
+      119,
+      39
+    ],
+    "cropPixels": [
+      143,
+      227,
+      563,
+      437
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "coldpool": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2022-11-27",
+    "sourceFrame": "2022-11-27.jpg",
+    "sourceImageBounds": [
+      62,
+      29,
+      137,
+      68
+    ],
+    "cropPixels": [
+      0,
+      46,
+      756,
+      424
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "front": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2022-11-28",
+    "sourceFrame": "2022-11-28.jpg",
+    "sourceImageBounds": [
+      105,
+      32,
+      126,
+      48
+    ],
+    "cropPixels": [
+      0,
+      114,
+      840,
+      535
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "terrain": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2023-07-05",
+    "sourceFrame": "2023-07-05.jpg",
+    "sourceImageBounds": [
+      112,
+      21,
+      116,
+      24
+    ],
+    "cropPixels": [
+      0,
+      122,
+      840,
+      542
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  }
+}

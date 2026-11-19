@@ -1,0 +1,13 @@
+node_modules/
+.packaging/
+.installer-build/
+.runtime/
+.deps/
+.data-cache/
+dist/
+installers/
+.uni-your-app/config.local.json
+.env
+.env.*
+!.env.example
+*.log

@@ -1,0 +1,20 @@
+# MeteoDial
+
+观象属于 Cinna 系列 Windows 软件。Windows 产品名为 MeteoDial，开发者为 Cinna，中文业务界面保留“观象”。沿用已发布应用的 AppUserModelID `org.guanxiang.weather`、内部可执行文件名 `Guanxiang.exe` 和用户资料目录 `%APPDATA%\观象`。
+
+## 主窗口
+
+- 桌面系列对照对象为 NetworkToolbox 和 LanDrop。`desktop/window-shell.json` 是本项目的几何规范。标题栏 44 DIP，侧栏固定展开 224 DIP，收起 56 DIP，内容工具栏 48 DIP。设置和固定开关在侧栏底部。
+- 主题支持跟随系统、浅色和深色。窗口控制遵循 Windows 原生最大化、还原、贴靠和缩放行为。托盘入口、退出方式与偏好保存使用同一产品身份。
+- 天气图的科学色标、实况与预报类型、来源和有效时刻是业务信息。出现时间或数据缺口时如实显示。保留区县预报、同轴双图和已归档的 9 个案例。
+- 避免不必要的次要标签和描述。让布局、控件和真实内容解释界面。
+
+## 安装与交付
+
+- 图标使用 Cinna 持气压计的产品母图。标题栏、托盘、EXE、快捷方式和安装器使用同一套导出。新版本保留图标文件的版本号，避免 Windows 沿用旧图缓存。
+- Electron Builder 负责 `win-unpacked` 载荷。正式安装器通过 `installer/inno` 中的原生场景窗口与 Inno Setup 7.1.0 事务生成。`npm run dist`、`npm run package` 指向同一入口。
+- 安装首页支持昼夜场景、当前安装摘要和安装设置抽屉。安装范围、目录及两个快捷方式选项应实际驱动安装。完成后由用户点“打开”启动。
+- 安装器目录 `installers/` 只放当前交付的 `MeteoDial-<version>-windows-x64-setup.exe`。载荷、校验、回退资料和测试注册保存在内部目录。改安装器时检验真实安装、取消恢复、旧登记迁移和卸载保留用户文件。
+- 升级继承安装位置，按目标路径核验旧快捷方式和旧安装标识。维护请求正常退出，等待退出后再写文件。保留用户资料和安装目录中非应用自有的文件。
+
+系列规范与历史版本迁移规则见 `docs/cinna-windows.md`。

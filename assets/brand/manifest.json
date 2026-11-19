@@ -1,0 +1,23 @@
+{
+  "product": "MeteoDial",
+  "developer": "Cinna",
+  "version": "0.2.1",
+  "variant": "weather-barometer",
+  "icoSizes": [
+    16,
+    20,
+    24,
+    32,
+    40,
+    48,
+    64,
+    128,
+    256
+  ],
+  "files": {
+    "icon.ico": "a7be1f11a94b4ea42352dfdec398126300bc67e722888deda9d68b92e1426af3",
+    "brand/cinna-weather-source.png": "5a77c3a5a7661c2d5be30d80dd8b63b44b0972c8dccefb4f6a8ac636ad8b0cc2",
+    "brand/app-icon-32.png": "03a45388d77ad46efbb28a6f30acedbb7a63fff2211101a41d3c1e7ad86d64f5",
+    "brand/app-icon-256.png": "1ae8e795482329f49f3306f9418c1835dd664db16a880044dd926471f770fac7"
+  }
+}

@@ -1,0 +1,7 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+assets/licences/** -whitespace
+installer/inno/licenses/** -whitespace

@@ -1,0 +1,32 @@
+{
+  "product": "MeteoDial",
+  "kind": "weather",
+  "edition": "2026-11",
+  "origin": "Cinna weather observation scenes, derived from the series character and original day/night installer compositions",
+  "files": [
+    {
+      "path": "source-day.png",
+      "width": 1609,
+      "height": 977,
+      "sha256": "0de93153473ee83fdac2da314ac22896bd4a97856ee26f9674bb31782d0d4314"
+    },
+    {
+      "path": "scene-day.jpg",
+      "width": 1609,
+      "height": 977,
+      "sha256": "14f5e10a1b46056b09b4ade1edc60c23278367cedab1b039d09de7ccac1469b9"
+    },
+    {
+      "path": "source-night.png",
+      "width": 1609,
+      "height": 977,
+      "sha256": "0b3f9789ff1b14b418a44dcb9a30659c2719bee63455befcbb3af3c2055e8c1f"
+    },
+    {
+      "path": "scene-night.jpg",
+      "width": 1609,
+      "height": 977,
+      "sha256": "6f3fd8bdcfca204ac20ae4be527cc5459661e6b7ed6d32833f7ab68296f766c4"
+    }
+  ]
+}

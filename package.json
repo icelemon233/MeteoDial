@@ -1,0 +1,74 @@
+{
+  "name": "meteodial",
+  "version": "0.2.1",
+  "description": "MeteoDial · 观象 — 全国区县预报、天气图与天气过程回放",
+  "author": "Cinna",
+  "main": "desktop/main.cjs",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "service": "node server/start.cjs",
+    "test": "node --test tests/*.test.cjs",
+    "dist": "pwsh -NoProfile -File scripts/package-windows.ps1",
+    "dev": "electron .",
+    "assets": "pwsh -NoProfile -File scripts/export-brand.ps1",
+    "build:app": "pwsh -NoProfile -File scripts/package-windows.ps1 -PayloadOnly",
+    "package": "pwsh -NoProfile -File scripts/package-windows.ps1"
+  },
+  "dependencies": {
+    "@meri-imperiumi/eccodes-wasm": "2.48.2",
+    "classic-level": "3.0.0"
+  },
+  "devDependencies": {
+    "electron": "45.3.4",
+    "electron-builder": "26.18.0",
+    "playwright-core": "1.60.0"
+  },
+  "build": {
+    "appId": "org.guanxiang.weather",
+    "productName": "MeteoDial",
+    "executableName": "Guanxiang",
+    "directories": {
+      "output": ".packaging/payload",
+      "buildResources": "assets"
+    },
+    "files": [
+      "desktop/**/*",
+      "server/**/*",
+      "ui/**/*",
+      "assets/data/**/*",
+      "assets/cases/**/*",
+      "assets/icon.ico",
+      "assets/NOTICE.txt",
+      "assets/licences/**/*",
+      "package.json",
+      "assets/brand/app-icon-32.png",
+      "assets/brand/app-icon-256.png",
+      "assets/brand/manifest.json",
+      "!**/node_modules/classic-level/prebuilds/{android-*,darwin-*,linux-*,win32-ia32}/**/*"
+    ],
+    "asar": true,
+    "asarUnpack": [
+      "node_modules/@meri-imperiumi/eccodes-wasm/**/*",
+      "node_modules/classic-level/prebuilds/win32-x64/*.node"
+    ],
+    "win": {
+      "target": "dir",
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "copyright": "Copyright © 2026 Cinna",
+    "electronDist": "node_modules/electron/dist",
+    "extraResources": [
+      {
+        "from": "assets/icon.ico",
+        "to": "app-icon-${version}.ico"
+      }
+    ],
+    "npmRebuild": false
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/icelemon233/MeteoDial.git"
+  }
+}

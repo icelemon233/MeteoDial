@@ -1,0 +1,27 @@
+{
+  "Name": "MeteoDial",
+  "Description": "查看区县天气，用天气图理解变化",
+  "Kind": "weather",
+  "Id": "org.guanxiang.weather",
+  "Executable": "Guanxiang.exe",
+  "UserFolder": "MeteoDial",
+  "AppUserModelId": "org.guanxiang.weather",
+  "MinimumWindows": "10.0.19041",
+  "Icon": "assets/icon.ico",
+  "BrandImage": "assets/brand/app-icon-256.png",
+  "ShortcutIcon": "resources/app-icon-${version}.ico",
+  "Bootstrapper": "",
+  "RequiresWebView2": false,
+  "UiRequirements": "Windows x64，安装包已包含 Electron 运行环境。",
+  "DataDirectory": "{userappdata}\\观象",
+  "LegacyKey": "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\6c2dadfc-a50f-5c71-b4dc-64e416935615",
+  "InstallingMutex": "Local\\Guanxiang.Installing",
+  "RunningMutex": "Local\\Guanxiang.Running",
+  "BackgroundExecutables": [],
+  "MaintenanceHelper": "",
+  "WelcomeText": "查看全国区县预报，联动气象图并回放真实天气过程。",
+  "ClosePrompt": "MeteoDial 正在运行。保存偏好并正常退出后继续安装。",
+  "LegacyFiles": [
+    "Uninstall Guanxiang.exe"
+  ]
+}
