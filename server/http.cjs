@@ -154,10 +154,7 @@ async function forwarded(remote, url) {
     }
     return result;
   } catch (error) {
-    if (
-      live &&
-      (!error.statusCode || error.statusCode >= 500 || [404, 422].includes(error.statusCode))
-    )
+    if (live && (!error.statusCode || error.statusCode >= 500 || error.statusCode === 404))
       return api(url);
     throw error;
   }
