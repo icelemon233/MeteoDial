@@ -17,6 +17,7 @@ import {
   failBox,
 } from './base.js';
 import { drawMap, geoFromPointer, sample, legend, extentFor } from './cartography.js';
+import { automaticLayers, pressureLevels, loadLevel } from './levels.js';
 const memo = new Map();
 function resource(url, signal) {
   // Requests shared by panels outlive a panel switch. Only the current revision paints.
@@ -33,23 +34,21 @@ function resource(url, signal) {
   if (memo.size > 90) memo.delete(memo.keys().next().value);
   return p;
 }
-const liveLayers = [
-  'wind850',
-  'temp850',
-  'height500',
-  'pressure',
-  'temp2',
-  'wind10',
-  'rainRate',
-  'moisture700',
-  'satellite',
-  'radar',
-  'track',
-];
+const liveGroups = {
+  '随选点与时次选层': Object.keys(automaticLayers),
+  '地面与降水': ['wind10', 'temp2', 'pressure', 'rainRate'],
+  '高空形势': ['height500', 'height400', 'height300'],
+  '定压风场': pressureLevels.map((p) => 'wind' + p),
+  '定压气温': pressureLevels.map((p) => 'temp' + p),
+  '定压湿度': pressureLevels.map((p) => 'moisture' + p),
+  '观测': ['satellite', 'radar', 'track'],
+};
 const seasons = ['冬季（12–2月）', '春季（3–5月）', '夏季（6–8月）', '秋季（9–11月）'];
 const categories = {
   bohai: '海洋天气',
   bohai22: '海洋天气',
+  'beijing-snow': '锋面与地形',
+  'ice-2008': '锋面与地形', 'cold-2016': '大尺度环流', 'henan-2021': '锋面与地形',
   doksuri: '海洋天气',
   ridge: '大尺度环流',
   trough: '大尺度环流',
@@ -65,11 +64,10 @@ function timesFor(c) {
   return c.climate ? [0, 3, 6, 9] : c.leads.map((n) => Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
 export function showCases({ main, ctx, catalog }) {
-  main.innerHTML = `<div class="case-filter seg">${['全部', '大尺度环流', '海洋天气', '锋面与地形'].map((x, i) => `<button class="${i ? '' : 'on'}">${x}</button>`).join('')}</div><div id="case-list" class="case-grid"></div>`;
+  main.innerHTML = `<div class="case-browse"><div class="case-filter seg">${['全部', '大尺度环流', '海洋天气', '锋面与地形'].map((x, i) => `<button class="${i ? '' : 'on'}">${x}</button>`).join('')}</div><a class="btn" href="#/cases/disasters">${icon('book',16)}重大气象灾害档案 ${icon('right',14)}</a></div><div id="case-list" class="case-grid"></div>`;
   const render = (kind) => {
-    const ordered = [...catalog].sort(
-      (a, b) => Number(a.id === 'bohai22') - Number(b.id === 'bohai22')
-    );
+    const order = (id) => id === 'beijing-snow' ? -1 : Number(id === 'bohai22');
+    const ordered = [...catalog].sort((a, b) => order(a.id) - order(b.id));
     $('#case-list').innerHTML = ordered
       .filter((c) => kind === '全部' || categories[c.id] === kind)
       .map(
@@ -98,7 +96,10 @@ function principle(kind) {
   return `<details class="cross-section"><summary>${icon('cross', 16)} 从侧面看${mountain ? '地形抬升' : '冷暖交锋'} · 原理示意</summary><svg viewBox="0 0 380 145" role="img" aria-label="${mountain ? '湿空气沿迎风坡抬升' : '暖湿空气沿倾斜锋面抬升'}"><defs><marker id="section-arrow" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0 0L4 2 0 4Z" fill="${mountain ? '#268e9a' : '#ba7855'}"/></marker></defs><rect width="380" height="145" fill="#e9f2f5"/><path d="M0 123h380v22H0" fill="#a5ac91"/>${shape}</svg></details>`;
 }
 function panelHtml(side, available) {
-  return `<section class="map-panel" data-side="${side}"><div class="map-panel-head"><label><span class="sr">${side === 'left' ? '左图' : '右图'}图层</span><select class="layer-select">${available.map((k) => `<option value="${k}">${layerNames[k]}</option>`).join('')}</select></label><span class="kind"></span></div><div class="map-body"><canvas tabindex="0" aria-label="天气图，点击读取格点，方向键移动取样点"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
+  const options = (keys) => keys.map((k) => `<option value="${k}">${layerNames[k]}</option>`).join('');
+  const choices = available ? options(available) : Object.entries(liveGroups)
+    .map(([name, keys]) => `<optgroup label="${name}">${options(keys)}</optgroup>`).join('');
+  return `<section class="map-panel" data-side="${side}"><div class="map-panel-head"><label><span class="sr">${side === 'left' ? '左图' : '右图'}图层</span><select class="layer-select">${choices}</select></label><span class="kind"></span></div><div class="map-body"><canvas tabindex="0" aria-label="天气图，点击读取格点，方向键移动取样点"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
 }
 const guides = {
   wind850: '850 hPa 风场显示低层气流。沿箭头向上游回看，可以追踪空气来自哪里。',
@@ -113,9 +114,17 @@ const guides = {
   climate: '观察各纬度海平面气压的季节平均分布。',
   zonal: '对同一纬度的各经度取平均，比较纬向平均气压的高值和低值。',
 };
+function guideFor(layer) {
+  if (guides[layer]) return guides[layer];
+  if (layer.startsWith('wind')) return '沿箭头向上游回看，比较进入选点的气流来自哪个方向。';
+  if (layer.startsWith('height')) return guides.height500;
+  if (layer.startsWith('temp')) return guides.temp850;
+  if (layer.startsWith('moisture')) return guides.moisture700;
+  return '';
+}
 export async function showMaps({ main, ctx, place, params }, c) {
-  const available = c ? c.layers : liveLayers;
-  let layers = c ? [...c.defaults] : ['wind850', 'temp2'],
+  const available = c?.layers;
+  let layers = c ? [...c.defaults] : ['autoUpper', 'autoTransport'],
     frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
   let run,
@@ -278,9 +287,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
         compare = `<p class="compare"><b>${escape(place[1])} · ${clockTime(row.time)}</b>　主预报 ${fmtNum(row.temp, 1)}℃，GFS 最近格点 ${fmtNum(s.value, 1)}℃。两份预报相差 ${fmtNum(delta, 1)}℃。</p>`;
       }
     }
-    const reading = layers.map((l, i) => {
+    const reading = layers.map((choice, i) => {
       const g = items[i],
-        v = sample(g, ...point);
+        l = g?.layer || choice,
+        v = sample(g, ...(cursor || point));
       if (l === 'radar')
         return '看图上的有效范围和 dBZ 色标，再逐帧观察回波的移动。图像覆盖台湾及邻近海域。';
       if (l === 'rainRate')
@@ -288,20 +298,27 @@ export async function showMaps({ main, ctx, place, params }, c) {
       if (g?.v && v?.value != null) {
         const direction = ((Math.atan2(-v.u, -v.v) * 180) / Math.PI + 360) % 360;
         return (
-          place[1] +
-          '附近的' +
+          (cursor ? '选点' : place[1]) + '附近的' +
           layerNames[l] +
           '为' +
           windDir(direction) +
           '，风速约 ' +
           fmtNum(v.value, 1) +
           ' m/s。' +
-          guides[l]
+          guideFor(l)
         );
       }
-      return guides[l];
-    });
-    el.innerHTML = `<section class="reading panel"><div class="reading-main"><h2>${icon('book', 18)}${c ? '怎样读这次过程' : '怎样读这两张图'}</h2>${(c ? c.guides : [...new Set(reading)]).map((s, i) => `<p class="step"><b>${i + 1}</b>${escape(s)}</p>`).join('')}${compare}</div>${c ? `<div class="case-evidence"><h3>${c.climate ? '资料时段' : '当时的预报'}</h3><p>${escape(c.forecast)}</p><h3>${c.climate ? '怎么比较' : '实况回看'}</h3><p>${escape(c.outcome)}</p>${safeLink(c.link, '查看机构原始资料')} ${c.outcomeSource ? safeLink(c.outcomeSource, '实况记录') : ''}</div>` : ''}</section>${c?.cross ? principle(c.cross) : ''}${c?.alternate ? `<a class="practice" href="#/cases/${c.alternate}">${icon('layers', 17)}换一次降雪，隐藏标注自己读 ${icon('arrow', 16)}</a>` : ''}`;
+      return guideFor(l);
+    }).filter(Boolean);
+    el.innerHTML = `<section class="reading panel"><div class="reading-main"><h2>${icon('book', 18)}${c ? '怎样读这次过程' : '怎样读这两张图'}</h2>${(c ? c.guides : [...new Set(reading)]).map((s, i) => `<p class="step"><b>${i + 1}</b>${escape(s)}</p>`).join('')}${compare}</div>${c ? `<div class="case-evidence"><h3>${c.climate ? '资料时段' : c.dataMode === 'reanalysis' ? '再分析回看' : '当时的预报'}</h3><p>${escape(c.forecast)}</p><h3>${c.climate ? '怎么比较' : '实况回看'}</h3><p>${escape(c.outcome)}</p>${safeLink(c.link, '查看机构原始资料')} ${c.outcomeSource ? safeLink(c.outcomeSource, '实况记录') : ''}</div>` : ''}</section>${c?.cross ? principle(c.cross) : ''}${c?.alternate ? `<a class="practice" href="#/cases/${c.alternate}">${icon('layers', 17)}换一次降雪，隐藏标注自己读 ${icon('arrow', 16)}</a>` : ''}`;
+    const auto = Object.values(items).find((g) => g?.autoRole);
+    if (!c && auto) {
+      const explanation = Number.isFinite(auto.selectionPressure)
+        ? (cursor ? '选点' : place[1]) + '附近的模式地面气压为 ' + fmtNum(auto.selectionPressure) + ' hPa。自动选层以此格点、此时次为准，山峰与峡谷的实际地势可能不同。'
+        : '该点的模式地面气压暂缺，近地层使用离地 10 米风。';
+      $('.reading-main', el).insertAdjacentHTML('beforeend', '<p class="compare">' + escape(explanation) + '</p>');
+    }
+    if (c?.earlyReport) $('.case-evidence', el).insertAdjacentHTML('beforeend', ' ' + safeLink(c.earlyReport, '初期站报'));
     if (localArchive) {
       const flagged = localArchive.rows.filter((r) => r.snow > 0.5 && r.rate > 0.01);
       const summary = flagged.length
@@ -322,6 +339,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
       return fmtNum(row.reduce((s, x) => s + x, 0) / row.length, 1) + ' hPa · 纬向平均';
     }
     const v = sample(g, lon, lat);
+    if (v?.belowGround) return '该气压面位于模式地面或地下';
+    if (v && v.value === null) return '此格点缺测';
     if (v?.value != null) {
       let out = fmtNum(v.value, 1) + ' ' + (layerUnit[layer] || '');
       if (g.v) {
@@ -340,7 +359,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
         el.textContent = g?.values ? '点击地图读取格点值' : '';
         return;
       }
-      const v = valueFor(g, layers[i], ...cursor);
+      const v = valueFor(g, layers[i] === 'zonal' ? 'zonal' : g?.layer || layers[i], ...cursor);
       el.textContent = v
         ? `${fmtNum(cursor[0], 1)}°E　${fmtNum(cursor[1], 1)}°N　·　${v}`
         : g?.values
@@ -355,8 +374,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
       if (!g) return;
       void drawMap($('canvas', p), g, {
         bbox,
-        point: c?.point || point,
-        tag: showGuide ? c?.tag || place[3] : '',
+        point: c?.point || cursor || point,
+        tag: showGuide ? c?.tag || (cursor ? '选点' : place[3]) : '',
         annotation: showGuide ? c?.annotation : null,
         cities: showGuide,
         zonal: layers[i] === 'zonal',
@@ -414,14 +433,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     const batch = t < Date.parse(run) ? Math.floor(t / (6 * HOUR)) * 6 * HOUR : Date.parse(run);
     const lead = Math.floor((t - batch) / (3 * HOUR)) * 3;
-    return resource(
-      '/api/grid?run=' +
-        encodeURIComponent(new Date(batch).toISOString()) +
-        '&lead=' +
-        lead +
-        '&layer=' +
-        layer
-    );
+    const gridUrl = '/api/grid?run=' + encodeURIComponent(new Date(batch).toISOString()) + '&lead=' + lead + '&layer=';
+    return loadLevel(layer, cursor || point, (key) => resource(gridUrl + key));
   }
   async function refresh() {
     if (!ctx.active) return;
@@ -462,12 +475,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
               ? g.valid + ' UTC'
               : validText(g.valid);
           const src = $('.map-source', p);
-          src.textContent = g.source + ' · ' + valid + (g.type === '卫星日合成' ? ' · 黑区为缺测' : '');
+          const level = g.autoRole ? layerNames[g.layer] + ' · ' : '';
+          src.textContent = level + g.source + ' · ' + valid + (g.type === '卫星日合成' ? ' · 黑区为缺测' : '');
           src.title = g.run ? '起报 ' + validText(g.run) + '，有效 ' + valid : g.source;
           if (g.values && layer !== 'zonal') {
-            const l = legend(layer);
+            const l = legend(g.layer);
             $('.color-scale', p).innerHTML =
               `<span>${l.low}</span><i style="background:${l.gradient}"></i><span>${l.high} ${l.unit}</span>`;
+            if (g.terrainMask?.includes(1)) $('.color-scale', p).insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
           }
           repaint();
         } catch (e) {
@@ -549,7 +564,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
   zb[2].onclick = () => {
     bbox = originalBox.slice();
     cursor = null;
-    repaint();
+    if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) void refresh();
+    else repaint();
   };
   $('.guide-switch').onclick = (e) => {
     showGuide = !showGuide;
@@ -585,7 +601,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
             90 -
             ((e.clientX - cv.getBoundingClientRect().left - 30) / Math.max(1, cv.clientWidth - 58)) *
               180;
-        updateRead();
+        if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) { stop(); void refresh(); }
+        else { repaint(); renderReading(); }
       }
       start = null;
     };
@@ -599,7 +616,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
       cursor = cursor || [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
       const step = items[i]?.step || 1;
       cursor = [cursor[0] + moves[e.key][0] * step, cursor[1] + moves[e.key][1] * step];
-      updateRead();
+      if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) { stop(); void refresh(); }
+      else { repaint(); renderReading(); }
     };
   });
   if (c && ['bohai', 'bohai22'].includes(c.id)) {

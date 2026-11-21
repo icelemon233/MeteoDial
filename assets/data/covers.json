@@ -1,4 +1,84 @@
 {
+  "ice-2008": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2008-01-26",
+    "sourceFrame": "2008-01-26.jpg",
+    "sourceImageBounds": [
+      90,
+      18,
+      135,
+      48
+    ],
+    "cropPixels": [
+      319,
+      286,
+      655,
+      455
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "cold-2016": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2016-01-23",
+    "sourceFrame": "2016-01-23.jpg",
+    "sourceImageBounds": [
+      90,
+      18,
+      135,
+      51
+    ],
+    "cropPixels": [
+      269,
+      419,
+      605,
+      587
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "henan-2021": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2021-07-20",
+    "sourceFrame": "2021-07-20.jpg",
+    "sourceImageBounds": [
+      106,
+      29,
+      123,
+      41
+    ],
+    "cropPixels": [
+      0,
+      97,
+      840,
+      517
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
+  "beijing-snow": {
+    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
+    "utcDate": "2023-12-11",
+    "sourceFrame": "2023-12-11.jpg",
+    "sourceImageBounds": [
+      110,
+      35,
+      122,
+      44
+    ],
+    "cropPixels": [
+      0,
+      84,
+      840,
+      504
+    ],
+    "width": 800,
+    "height": 400,
+    "screenedDarkFraction": 0.0
+  },
   "bohai": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
     "utcDate": "2023-12-20",

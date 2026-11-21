@@ -92,7 +92,7 @@ async function prepare(c) {
   const run = c.run + 'T00:00:00Z';
   const jobs = [];
   for (const lead of c.leads) {
-    for (const layer of c.layers.filter((l) => !['track', 'satellite'].includes(l))) {
+    for (const layer of c.layers.filter((l) => c.dataMode !== 'reanalysis' && !['track', 'satellite'].includes(l))) {
       jobs.push(() =>
         writeIfMissing(
           path.join(folder, layer + '-' + lead + '.json'),

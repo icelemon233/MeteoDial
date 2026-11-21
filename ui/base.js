@@ -151,11 +151,13 @@ export function safeLink(url, text) {
         '</a>'
     : '';
 }
+import { automaticLayers, pressureLevels } from './levels.js';
 export const layerNames = {
-  wind10: '近地面风场',
+  ...automaticLayers,
+  wind10: '离地 10 米风场',
   wind850: '850 hPa 风场',
   temp850: '850 hPa 气温',
-  temp2: '近地面气温',
+  temp2: '离地 2 米气温',
   height500: '500 hPa 位势高度',
   pressure: '海平面气压',
   moisture700: '700 hPa 相对湿度',
@@ -176,5 +178,15 @@ export const layerUnit = {
   climate: 'hPa',
   zonal: 'hPa',
 };
+for (const level of pressureLevels) {
+  for (const [variable, name, unit] of [['wind', '风场', 'm/s'], ['temp', '气温', '℃'], ['moisture', '相对湿度', '%']]) {
+    layerNames[variable + level] = level + ' hPa ' + name;
+    layerUnit[variable + level] = unit;
+  }
+}
+for (const level of [500, 400, 300]) {
+  layerNames['height' + level] = level + ' hPa 位势高度';
+  layerUnit['height' + level] = 'm';
+}
 layerNames.rainRate = '预报降水率';
 layerUnit.rainRate = 'mm/h';

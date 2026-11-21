@@ -16,6 +16,12 @@ The Electron main process starts the data service on a loopback port. The render
 
 The packaging scripts accept `INNOSETUP_ISCC` for Inno Setup 7.1.0 and `CINNA_ZIG` for Zig 0.15.2. Set `GUANXIANG_TEST_EXE` to run the desktop check against a built executable. The existing `GUANXIANG_` environment variables and Windows application ID also work with MeteoDial. [Windows identity and upgrades](./cinna-windows.md)
 
+## Weather maps and case sources
+
+The live map uses GFS surface pressure for the same model run, forecast hour and grid cell as the selected location. A whole panel shows a single physical pressure level. The upper-air preset uses the first suitable level among 500, 400 and 300 hPa, with pressure no greater than 72% of surface pressure. The transport preset starts at 850 hPa and requires pressure no greater than 90% of surface pressure. The near-surface wind preset uses 925 hPa at surface pressures of at least 950 hPa and 10 m wind elsewhere. These are display choices. Each pressure grid also masks cells where the level meets or falls below model terrain.
+
+The Beijing snow and Henan rain replays use archived GFS runs. The 2008 and 2016 cases use six-hourly ERA5 fields from WeatherBench 2. To rebuild the offline case assets, run `node scripts/prepare-cases.cjs`, `python scripts/prepare-reanalysis.py` and `python scripts/prepare-covers.py`. The Python scripts use NumPy, numcodecs and Pillow. The disaster archive stores source references, observed impacts and an original reading guide for each entry in `assets/data/disasters.json`.
+
 ## Project layout
 
 | Path | Contents |

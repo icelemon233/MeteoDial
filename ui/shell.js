@@ -7,7 +7,7 @@ const defaults = {
   closeBehavior: 'tray',
   recent: [],
   place: '',
-  version: '0.2.1',
+  version: '0.3.0',
 };
 function saved(key, fallback) {
   try {

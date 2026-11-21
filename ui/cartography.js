@@ -1,4 +1,5 @@
 import { get, fmtNum, layerUnit, clockTime } from './base.js';
+import { gridIndex } from './levels.js';
 let geography;
 const textures = new WeakMap(),
   images = new Map();
@@ -75,13 +76,23 @@ const palettes = {
   ],
 };
 function palette(layer) {
+  if (layer === 'height400' || layer === 'height300') {
+    const offset = layer === 'height400' ? 1650 : 3650;
+    return palettes.height.map(([value, rgb]) => [value + offset, rgb]);
+  }
+  if (layer.startsWith('temp') && Number(layer.slice(4)) >= 300) {
+    const offset = { 925: 4, 850: 0, 700: -8, 600: -15, 500: -23, 400: -35, 300: -44 }[layer.slice(4)] || 0;
+    return palettes.temp.map(([value, rgb]) => [value + offset, rgb]);
+  }
+  if (layer === 'wind300' || layer === 'wind400')
+    return palettes.wind.map(([value, rgb]) => [value * 2, rgb]);
   return layer.startsWith('wind')
     ? palettes.wind
     : layer.startsWith('temp')
       ? palettes.temp
       : layer === 'height500'
         ? palettes.height
-        : layer === 'moisture700'
+        : layer.startsWith('moisture')
           ? palettes.rh
           : layer === 'rainRate'
             ? palettes.rain
@@ -112,7 +123,7 @@ export function legend(layer) {
   };
 }
 function scalar(g, i) {
-  if (g.values[i] == null) return null;
+  if (!Number.isFinite(g.values[i]) || (g.v && !Number.isFinite(g.v[i]))) return null;
   return g.v ? Math.hypot(g.values[i], g.v[i]) : g.values[i];
 }
 function texture(g) {
@@ -123,15 +134,25 @@ function texture(g) {
   const t = c.getContext('2d'),
     pixels = t.createImageData(g.nx, g.ny),
     p = palette(g.layer);
+  let coverage;
   for (let i = 0; i < g.values.length; i++) {
     let val = scalar(g, i);
-    if (val === null) continue;
+    if (val === null) {
+      coverage ||= t.createImageData(g.nx, g.ny);
+      coverage.data.set(g.terrainMask?.[i] ? [111, 113, 116, 255] : [32, 60, 84, 255], 4 * i);
+      continue;
+    }
     let rgb = color(p, val);
     pixels.data.set([...rgb, 255], 4 * i);
   }
   t.putImageData(pixels, 0, 0);
-  textures.set(g, c);
-  return c;
+  const result = { field: c, coverage: null };
+  if (coverage) {
+    result.coverage = c.cloneNode();
+    result.coverage.getContext('2d').putImageData(coverage, 0, 0);
+  }
+  textures.set(g, result);
+  return result;
 }
 function imageFor(src) {
   if (!images.has(src)) {
@@ -150,13 +171,12 @@ function imageFor(src) {
   return images.get(src);
 }
 export function sample(g, lon, lat) {
-  if (!g?.values) return null;
-  const x = Math.round((lon - g.bbox[0]) / g.step),
-    y = Math.round((g.bbox[3] - lat) / g.step);
-  if (x < 0 || y < 0 || x >= g.nx || y >= g.ny) return null;
-  const k = y * g.nx + x;
+  const k = gridIndex(g, lon, lat);
+  if (k < 0) return null;
+  const x = k % g.nx, y = Math.floor(k / g.nx);
   return {
     value: scalar(g, k),
+    belowGround: Boolean(g.terrainMask?.[k]),
     u: g.values[k],
     v: g.v?.[k],
     lon: g.bbox[0] + x * g.step,
@@ -302,7 +322,7 @@ function windLines(f, g) {
 }
 function contours(f, g, bbox) {
   const inc =
-    g.layer === 'height500' ? 40 : g.layer.startsWith('temp') ? 4 : g.layer === 'moisture700' ? 15 : 4;
+    g.layer.startsWith('height') ? 40 : g.layer.startsWith('temp') ? 4 : g.layer.startsWith('moisture') ? 15 : 4;
   const { ctx, x, y } = f;
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(247,250,242,.57)';
@@ -407,11 +427,16 @@ function markers(f, point, tag, annot, showCities) {
     let xx = x(lon),
       yy = y(lat);
     if (xx < 5 || yy < 10 || xx > w - 5 || yy > h - 18) return;
-    if (!special && used.some((p) => Math.abs(p[0] - xx) < 55 && Math.abs(p[1] - yy) < 18)) return;
-    used.push([xx, yy]);
+    if (!special && used.some((p) => Math.abs(p[4] - xx) < 55 && Math.abs(p[5] - yy) < 18)) return;
     ctx.font = (special ? '600 12px ' : '10px ') + '"Microsoft YaHei UI",sans-serif';
-    const tw = ctx.measureText(txt).width,
-      tx = xx + 9 + tw > w ? xx - tw - 10 : xx + 9;
+    const tw = ctx.measureText(txt).width;
+    const fits = ([left, base]) => left >= 2 && left + tw < w - 2 && base >= 13 && base < h - 1 &&
+      used.every((box) => left > box[2] + 3 || left + tw < box[0] - 3 || base < box[1] - 2 || base - 12 > box[3] + 2);
+    const candidates = [yy + 4, yy - 9, yy + 18].flatMap((base) => [[xx + 9, base], [xx - tw - 9, base]]);
+    const label = candidates.find(fits);
+    if (!label && !special) return;
+    const [tx, ty] = label || [Math.max(2, Math.min(w - tw - 2, xx + 9)), yy + 4];
+    used.push([tx, ty - 12, tx + tw, ty, xx, yy]);
     ctx.fillStyle = special ? '#ffdeb1' : '#e7f2f1';
     ctx.beginPath();
     ctx.arc(xx, yy, special ? 3.6 : 1.9, 0, Math.PI * 2);
@@ -425,10 +450,11 @@ function markers(f, point, tag, annot, showCities) {
     }
     ctx.lineWidth = 3;
     ctx.strokeStyle = 'rgba(22,44,64,.85)';
-    ctx.strokeText(txt, tx, yy + 4);
-    ctx.fillText(txt, tx, yy + 4);
+    ctx.strokeText(txt, tx, ty);
+    ctx.fillText(txt, tx, ty);
   }
-  if (point && tag) mark(point[0], point[1], tag, true);
+  if (point && tag && !(annot && point[0] === annot[0] && point[1] === annot[1]))
+    mark(point[0], point[1], tag, true);
   if (annot) mark(annot[0], annot[1], annot[2], true);
   if (showCities) for (const p of cities) mark(...p, false);
 }
@@ -513,8 +539,13 @@ export async function drawMap(canvas, data, options = {}) {
       step = data.step;
     const xx = x(b[0] - step / 2),
       yy = y(b[3] + step / 2);
+    const raster = texture(data), width = x(b[2] + step / 2) - xx, height = y(b[1] - step / 2) - yy;
     ctx.imageSmoothingEnabled = true;
-    ctx.drawImage(texture(data), xx, yy, x(b[2] + step / 2) - xx, y(b[1] - step / 2) - yy);
+    ctx.drawImage(raster.field, xx, yy, width, height);
+    if (raster.coverage) {
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(raster.coverage, xx, yy, width, height);
+    }
   }
   if (img) {
     if (data.externalImage) {

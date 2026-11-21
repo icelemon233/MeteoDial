@@ -8,11 +8,13 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[1]
 ASSETS = ROOT / 'assets'
 FOCUS = {
+    'ice-2008': (112.9, 28.2), 'cold-2016': (113.3, 24.0), 'henan-2021': (113.7, 34.8),
+    'beijing-snow': (116.2, 39.8),
     'bohai': (121.1, 38.0), 'bohai22': (121.0, 38.0),
     'ridge': (111.0, 30.0), 'trough': (100.3, 25.3),
     'coldpool': (89.2, 47.0), 'front': (116.4, 39.9), 'terrain': (114.12, 22.41),
 }
-CASE_DAY = {'bohai':'2023-12-20', 'bohai22':'2022-12-22', 'doksuri':'2023-07-26',
+CASE_DAY = {'ice-2008':'2008-01-26','cold-2016':'2016-01-24','henan-2021':'2021-07-20','beijing-snow':'2023-12-11', 'bohai':'2023-12-20', 'bohai22':'2022-12-22', 'doksuri':'2023-07-26',
             'ridge':'2022-08-18', 'trough':'2022-02-19', 'coldpool':'2022-11-27',
             'front':'2022-11-28', 'terrain':'2023-07-04'}
 

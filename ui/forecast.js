@@ -13,11 +13,13 @@ import {
   clockTime,
   validText,
   HOUR,
+  layerNames,
   failBox,
   openDialog,
   closeButton,
 } from './base.js';
-import { drawMap, sample } from './cartography.js';
+import { drawMap } from './cartography.js';
+import { loadLevel } from './levels.js';
 
 function change(rows) {
   const near = rows.slice(0, 25),
@@ -201,7 +203,7 @@ function stats(p) {
 export async function showForecast({ main, ctx, place, locationMatch, search }) {
   const placeName = place[7] === 2 && place[3] !== place[1] ? place[3] + ' · ' + place[1] : place[1];
   main.innerHTML = `<div class="page-head"><div><div class="subtitle">${dateText(Date.now(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</div></div><button class="btn reload">${icon('refresh', 15)}更新</button></div>
-  <section class="weather-hero"><div class="hero-map"><canvas aria-label="区域高空风场预报"></canvas></div>
+  <section class="weather-hero"><div class="hero-map"><canvas aria-label="区域近地层风场预报"></canvas></div>
     <div class="hero-copy"><button class="hero-location">${icon('pin', 18)}${escape(placeName)}${icon('down', 13)}</button>
       <div id="now-temp" class="big-temp">—<sup>°</sup></div><div id="obs-line" class="observation-line">正在查询附近站报…</div><div id="hero-change" class="hero-change">正在读取预报…</div><div id="hero-sub" class="hero-sub"></div></div>
     <div class="hero-atlas"><span id="map-stamp">区域天气图</span><a id="hero-open" href="#/maps" class="glass-button">展开天气图 ${icon('out', 15)}</a></div></section>
@@ -250,13 +252,11 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
         0,
         Math.min(240, Math.round((Date.now() - Date.parse(modelRun)) / (3 * HOUR)) * 3)
       );
-      grid = await get(
-        '/api/grid?run=' + encodeURIComponent(modelRun) + '&lead=' + lead + '&layer=wind850',
-        ctx.signal
-      );
+      const gridUrl = '/api/grid?run=' + encodeURIComponent(modelRun) + '&lead=' + lead + '&layer=';
+      grid = await loadLevel('autoNear', [place[5], place[4]], (layer) => get(gridUrl + layer, ctx.signal));
       if (!ctx.active) return;
       heroTime = grid.valid;
-      $('#map-stamp').textContent = '850 hPa 风场 · GFS ' + validText(grid.valid);
+      $('#map-stamp').textContent = (grid.layer === 'wind10' ? '离地 10 米风场' : layerNames[grid.layer]) + ' · GFS ' + validText(grid.valid);
       paint();
       $('#hero-open').href = '#/maps?time=' + encodeURIComponent(showTime || heroTime);
     } catch {

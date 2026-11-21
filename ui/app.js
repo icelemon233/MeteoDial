@@ -15,6 +15,7 @@ import {
 } from './base.js';
 import { showForecast } from './forecast.js';
 import { showMaps, showCases } from './viewer.js';
+import { showDisasters } from './disasters.js';
 const main = $('#content');
 const nav = [
   ['weather', 'forecast', '本地天气'],
@@ -184,7 +185,7 @@ $('#sources').onclick = () =>
   openDialog(`<div class="modal-head"><h2>数据来源</h2>${closeButton()}</div><dl class="source-list">
 <dt>区县预报</dt><dd>MET Norway Locationforecast，卫星与地面观测同化后的格点预报。区县名称对应代表点，逐日范围由源时间序列汇总。${safeLink('https://docs.api.met.no/doc/locationforecast/datamodel.html', '数据说明')} ${safeLink('https://creativecommons.org/licenses/by/4.0/', 'CC BY 4.0')}</dd>
 <dt>地面观测</dt><dd>按定位或区县代表点从 2,420 个内地国家站中选最近站，距离按 2021 年站表估算。气温取三小时内的实测，距站超过 100 公里会标为远站。国家站缺报时查询 100 公里内的航空站。${safeLink('https://q-weather.info/apidoc/', '查天气 API')} ${safeLink('https://github.com/nmcdev/nmc_met_graphics/blob/4fcbfddaf551f04cd8e88b6374b87c766ffc4ec7/nmc_met_graphics/resources/stations/cma_national_station_info.dat', '国家站表')} ${safeLink('https://aviationweather.gov/data/api/', 'NOAA AWC')}</dd>
-<dt>高空与地面图</dt><dd>NOAA GFS 原始 GRIB2。等值线、箭头和颜色由观象绘制。${safeLink('https://www.noaa.gov/information-technology/open-data-dissemination', 'NOAA 开放资料')}</dd>
+<dt>高空与地面图</dt><dd>实时图取自 NOAA GFS。按同时次的模式地面气压选择形势层、输送层和近地层，灰色表示气压面与地形相交。2008 年冰冻、2016 年寒潮采用 1.5° ERA5 再分析。${safeLink('https://www.noaa.gov/jetstream/upper-air-charts/constant-pressure-charts-850-mb', '等压面读图')} ${safeLink('https://weatherbench2.readthedocs.io/en/latest/data-guide.html', '历史格点来源')}</dd>
 <dt>卫星观测</dt><dd>近期红外云图来自日本气象厅葵花卫星。案例云图取自 NASA GIBS 的 MODIS Terra 真彩色日合成，并叠加地理标注。${safeLink('https://www.data.jma.go.jp/mscweb/en/general/note.html', '日本气象厅使用说明')} ${safeLink('https://www.earthdata.nasa.gov/data/tools/gibs', 'NASA GIBS')}</dd>
 <dt>台风与气候</dt><dd>近期路径由香港天文台发布，历史最佳路径取自日本气象厅 RSMC Tokyo。气候平均采用 NOAA PSL 的 NCEP/NCAR 1991—2020 常年值。${safeLink('https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info', '香港天文台')} ${safeLink('https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.derived.html', 'NOAA PSL')}</dd>
 <dt>区域雷达</dt><dd>CWA 整合回波图覆盖台湾及邻近海域。内地单站雷达可在中央气象台选择城市查看。${safeLink('https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html', 'CWA 雷达')} ${safeLink('https://data.gov.tw/dataset/75125', '开放资料说明')} ${safeLink('https://www.nmc.cn/publish/radar/shan-dong/qing-dao.htm', '中央气象台单站雷达')}</dd>
@@ -204,6 +205,7 @@ function route() {
     params = new URLSearchParams(raw),
     label = nav.find((n) => n[0] === key)?.[2] || '设置';
   const c = catalog.find((entry) => entry.id === parts[1]);
+  const archive = key === 'cases' && parts[1] === 'disasters';
   $$('#nav a').forEach((a) => {
     a.classList.toggle('active', a.dataset.nav === key);
     a.setAttribute('aria-current', a.dataset.nav === key ? 'page' : 'false');
@@ -212,11 +214,11 @@ function route() {
   settingsNav.classList.toggle('active', key === 'settings');
   settingsNav.setAttribute('aria-current', key === 'settings' ? 'page' : 'false');
   $('#breadcrumb').innerHTML =
-    key === 'cases' && c
+    key === 'cases' && (c || archive)
       ? '<a href="#/cases" title="返回天气案例" aria-label="返回天气案例">' +
         icon('left', 18) +
         '</a><h1>' +
-        escape(c.title) +
+        escape(archive ? '重大气象灾害档案' : c.title) +
         '</h1>'
       : '<h1>' + escape(label) + '</h1>';
   document.title = label + ' · MeteoDial';
@@ -229,6 +231,8 @@ function route() {
         ? showForecast(env)
         : key === 'maps'
           ? showMaps(env, null)
+          : archive
+            ? showDisasters(env, parts[2])
           : c
             ? showMaps(env, c)
             : showCases(env);

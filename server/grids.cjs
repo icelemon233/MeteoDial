@@ -6,27 +6,30 @@ const origin = 'https://noaa-gfs-bdp-pds.s3.amazonaws.com';
 const boxes = {
   asia: [55, 5, 165, 75],
   bohai: [112, 30, 132, 45],
+  beijing: [110, 35, 122, 44],
+  henan: [106, 29, 123, 41],
   south: [75, 15, 126, 40],
   coast: [105, 10, 145, 43],
   globe: [0, -88, 358, 88],
 };
 const fields = {
-  wind850: [
-    ['UGRD', '850 mb'],
-    ['VGRD', '850 mb'],
-  ],
   wind10: [
     ['UGRD', '10 m above ground'],
     ['VGRD', '10 m above ground'],
   ],
-  temp850: [['TMP', '850 mb']],
   temp2: [['TMP', '2 m above ground']],
-  height500: [['HGT', '500 mb']],
   pressure: [['PRMSL', 'mean sea level']],
-  moisture700: [['RH', '700 mb']],
   rainRate: [['PRATE', 'surface']],
   snowFlag: [['CSNOW', 'surface']],
+  surfacePressure: [['PRES', 'surface']],
 };
+for (const level of [925, 850, 700, 600, 500, 400, 300]) {
+  const isobar = level + ' mb';
+  fields['wind' + level] = [['UGRD', isobar], ['VGRD', isobar]];
+  fields['temp' + level] = [['TMP', isobar]];
+  fields['moisture' + level] = [['RH', isobar]];
+}
+for (const level of [500, 400, 300]) fields['height' + level] = [['HGT', level + ' mb']];
 let engine;
 function address(run, lead, resolution) {
   const date = new Date(run).toISOString();
@@ -116,14 +119,17 @@ async function fetchField(url, item, bbox, step) {
     if (Math.abs(north - 90) > 0.1 || west !== 0 || nx * ny <= 0 || nx * ny > 2e6)
       throw Error('模式格网格式未识别');
     const a = handle.getDoubleArray('values');
+    const missing = handle.getLong('bitmapPresent') ? Number(handle.getDouble('missingValue')) : NaN;
     const list = [];
     for (let lat = bbox[3]; lat >= bbox[1] - 0.001; lat -= step) {
       const row = Math.round((north - lat) / dy);
       for (let lon = bbox[0]; lon <= bbox[2] + 0.001; lon += step) {
         const col = (Math.round((lon - west) / dx) + nx) % nx;
         let v = a[row * nx + col];
+        if (!Number.isFinite(v) || v === missing || Math.abs(v) >= 1e10) { list.push(null); continue; }
         if (item.field === 'TMP') v -= 273.15;
         if (item.field === 'PRMSL' || item.field === 'PRES') v /= 100;
+        if (item.field === 'PRES' && (v < 250 || v > 1100)) { list.push(null); continue; }
         if (item.field === 'PRATE') v *= 3600;
         const precision = item.field === 'PRATE' ? 100 : 10;
         list.push(
@@ -141,7 +147,7 @@ async function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', ste
     specs = fields[layer];
   if (!bbox || !specs) throw Error('未知图层');
   const url = address(run, lead, resolution);
-  return cached(['gfs-grid-v5', url, layer, box, step].join(':'), 10 * 864e5, async () => {
+  return cached(['gfs-grid-v7', url, layer, box, step].join(':'), 10 * 864e5, async () => {
     const index = await indexFor(url);
     const arrays = await Promise.all(
       specs.map(([tag, lev]) => {
@@ -152,18 +158,18 @@ async function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', ste
             (!['PRATE', 'CSNOW'].includes(tag) || !/(?:ave|acc) fcst/.test(e.period))
         );
         if (!entry) throw Error('此批次缺少所选字段');
-        return fetchField(url, entry, bbox, step);
+        return layer === 'surfacePressure' ? readSurface(url, entry, box, step) : fetchField(url, entry, bbox, step);
       })
     );
     const pressureLevel = specs[0][1].match(/^(\d+) mb$/);
+    let terrainMask;
     if (pressureLevel) {
       const surfaceEntry = index.find((e) => e.field === 'PRES' && e.level === 'surface');
       if (!surfaceEntry) throw Error('缺少地面气压，无法识别地形遮挡');
-      const surface = await cached(['gfs-surface', url, box, step].join(':'), 10 * 864e5, async () => ({
-        value: await fetchField(url, surfaceEntry, bbox, step),
-      }));
+      const surface = await readSurface(url, surfaceEntry, box, step);
+      terrainMask = surface.map((ps) => Number.isFinite(ps) && ps <= Number(pressureLevel[1]) ? 1 : 0);
       for (let i = 0; i < surface.length; i++)
-        if (surface[i] === null || surface[i] < Number(pressureLevel[1]))
+        if (surface[i] === null || terrainMask[i])
           for (const array of arrays) array[i] = null;
     }
     return {
@@ -181,8 +187,14 @@ async function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', ste
         resolution: resolution.replace('p', '.') + '°',
         values: arrays[0],
         v: arrays[1],
+        terrainMask,
       },
     };
   });
+}
+function readSurface(url, entry, box, step) {
+  return cached(['gfs-ps-v3', url, box, step].join(':'), 10 * 864e5, async () => ({
+    value: await fetchField(url, entry, boxes[box], step),
+  }));
 }
 module.exports = { fields, boxes, readGrid, latestRun, address };

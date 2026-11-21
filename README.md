@@ -11,11 +11,11 @@ MeteoDial (观象) is a Windows weather app by Cinna. Look up a city or county i
 
 ## Using MeteoDial
 
-Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyin. In the development build, **使用我的位置** (Use my location) finds the nearest national station in the bundled directory. Select the station to see each measurement and its observation time. The local forecast covers the next 48 hours by hour and the next 10 days by day.
+Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyin. In 0.3.0, **使用我的位置** (Use my location) finds the nearest national station in the bundled directory. Select the station to see each measurement and its observation time. The local forecast covers the next 48 hours by hour and the next 10 days by day.
 
-In **天气图** (Weather maps), drag the shared timeline to compare wind, temperature, pressure, upper-air contours or satellite imagery. Each panel shows its source and valid time. Live radar covers Taiwan and its adjacent waters.
+In **天气图** (Weather maps), compare upper-air patterns, lower-level transport and near-surface wind at the same time. The app selects pressure levels using model surface pressure at the selected point and valid time. Click another point to change the reference or choose a fixed level. Gray cells mark a pressure surface at or below model terrain.
 
-In **天气案例** (Case studies), try the Bohai Sea snow event. Follow the wind across the water on one map and look for cloud bands approaching the Shandong coast on the other. Nine archived cases covering eight topics are bundled with the app and work offline. [View the snow case](./docs/previews/bohai-snow.png)
+**天气案例** (Case studies) includes 13 offline map replays, including a Beijing snowfall, the 2008 southern China ice storms, the January 2016 cold wave and the July 2021 Henan floods. Open **重大气象灾害档案** to search event analyses since 2001 by year, place or hazard. Each entry links to its source. [View the Bohai snow case](./docs/previews/bohai-snow.png)
 
 ## Run from source
 
