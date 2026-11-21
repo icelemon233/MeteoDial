@@ -9,7 +9,7 @@ const catalog = require('../assets/data/catalog.json');
 const archive = require('../assets/data/disasters.json');
 
 test('按同一时次选平原和高原三层，地形和未知气压不能变成低空气象值', async () => {
-  const { levelFor, loadLevel } = await loadModule('levels.js');
+  const { levelFor, gridIndex } = await loadModule('levels.js');
   const roles = ['autoUpper', 'autoTransport', 'autoNear'];
   assert.deepEqual(
     roles.map((r) => levelFor(r, 1005)),
@@ -24,13 +24,10 @@ test('按同一时次选平原和高原三层，地形和未知气压不能变�
     ['height300', 'wind400', 'wind10'],
   );
   const ps = { values: [1005, 585], bbox: [100, 30, 101, 30], nx: 2, ny: 1, step: 1 };
-  const read = async (layer) =>
-    layer === 'surfacePressure' ? ps : { layer, valid: '2024-01-10T00:00Z' };
-  assert.equal((await loadLevel('autoTransport', [101, 30], read)).layer, 'wind500');
-  assert.equal((await loadLevel('autoNear', [101, 30], read)).selectionPressure, 585);
-  assert.equal((await loadLevel('wind850', [101, 30], read)).layer, 'wind850');
-  await assert.rejects(loadLevel('autoUpper', [200, 80], read), /地面气压/);
-  assert.equal((await loadLevel('autoNear', [200, 80], read)).layer, 'wind10');
+  assert.equal(levelFor('autoTransport', ps.values[gridIndex(ps, 101, 30)]), 'wind500');
+  assert.equal(levelFor('wind850', 585), 'wind850');
+  assert.equal(levelFor('autoUpper', null), null);
+  assert.equal(levelFor('autoNear', null), 'wind10');
 });
 test('地形掩膜、矢量缺测与图外点分别处理', async () => {
   const { sample } = await loadModule('cartography.js');

@@ -14,12 +14,18 @@ test('共享服务保持桌面端原来的接口和本地离线资源', async ()
     res.end(JSON.stringify({ query: req.url }));
   });
   await new Promise((resolve) => upstream.listen(0, '127.0.0.1', resolve));
-  const app = await startServer(dir, 0, { upstream: 'http://127.0.0.1:' + upstream.address().port });
+  const app = await startServer(dir, 0, {
+    upstream: 'http://127.0.0.1:' + upstream.address().port,
+  });
   try {
     const result = await (await fetch(app.url + '/api/forecast?id=371002')).json();
     assert.equal(result.query, '/api/forecast?id=371002');
     const g = await (await fetch(app.url + '/assets/cases/bohai/wind10-30.json')).json();
     assert.equal(g.layer, 'wind10');
+    const rules = await fetch(app.url + '/shared/levels.mjs');
+    assert.match(rules.headers.get('content-type'), /javascript/);
+    assert.match(await rules.text(), /levelChoices/);
+    assert.equal((await fetch(app.url + '/shared/private.mjs')).status, 404);
     assert.equal((await fetch(app.url + '/api/unknown')).status, 404);
     assert.throws(() => serviceBase('http://weather.example.com'));
   } finally {
@@ -51,7 +57,7 @@ test('相同图层的并发请求复用结果，过期连接失败使用注明�
       async () => {
         throw Error('offline');
       },
-      { stale: 5000 }
+      { stale: 5000 },
     );
     assert.equal(stale.sample, 31.2);
     assert.equal(stale.offline, true);
@@ -63,8 +69,8 @@ test('相同图层的并发请求复用结果，过期连接失败使用注明�
         async () => {
           throw Object.assign(Error('permission denied'), { statusCode: 403 });
         },
-        { stale: 5000 }
-      )
+        { stale: 5000 },
+      ),
     );
   } finally {
     await fs.rm(dir, { recursive: true, force: true });

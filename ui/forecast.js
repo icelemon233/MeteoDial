@@ -19,7 +19,7 @@ import {
   closeButton,
 } from './base.js';
 import { drawMap } from './cartography.js';
-import { loadLevel } from './levels.js';
+import { liveGridUrl, actualLevel, sourceName } from './levels.js';
 
 function change(rows) {
   const near = rows.slice(0, 25),
@@ -252,11 +252,10 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
         0,
         Math.min(240, Math.round((Date.now() - Date.parse(modelRun)) / (3 * HOUR)) * 3)
       );
-      const gridUrl = '/api/grid?run=' + encodeURIComponent(modelRun) + '&lead=' + lead + '&layer=';
-      grid = await loadLevel('autoNear', [place[5], place[4]], (layer) => get(gridUrl + layer, ctx.signal));
+      grid = await get(liveGridUrl(modelRun,lead,'autoNear',[place[5],place[4]]),ctx.signal);
       if (!ctx.active) return;
       heroTime = grid.valid;
-      $('#map-stamp').textContent = (grid.layer === 'wind10' ? '离地 10 米风场' : layerNames[grid.layer]) + ' · GFS ' + validText(grid.valid);
+      $('#map-stamp').textContent = actualLevel(grid,layerNames) + ' · ' + sourceName(grid) + ' ' + validText(grid.valid);
       paint();
       $('#hero-open').href = '#/maps?time=' + encodeURIComponent(showTime || heroTime);
     } catch {

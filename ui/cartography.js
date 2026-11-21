@@ -171,6 +171,7 @@ function imageFor(src) {
   return images.get(src);
 }
 export function sample(g, lon, lat) {
+  if (!g?.values) return null;
   const k = gridIndex(g, lon, lat);
   if (k < 0) return null;
   const x = k % g.nx, y = Math.floor(k / g.nx);

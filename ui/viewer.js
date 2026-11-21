@@ -17,19 +17,19 @@ import {
   failBox,
 } from './base.js';
 import { drawMap, geoFromPointer, sample, legend, extentFor } from './cartography.js';
-import { automaticLayers, pressureLevels, loadLevel } from './levels.js';
+import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel } from './levels.js';
 const memo = new Map();
 function resource(url, signal) {
   // Requests shared by panels outlive a panel switch. Only the current revision paints.
   const hit = memo.get(url);
   if (hit && hit.expires > Date.now()) return hit.promise;
   const p = get(url).catch((e) => {
-    memo.delete(url);
+    if (memo.get(url)?.promise === p) memo.delete(url);
     throw e;
   });
   memo.set(url, {
     promise: p,
-    expires: Date.now() + (url === '/api/cyclones' ? 15 * 60000 : 24 * HOUR),
+    expires: Date.now() + (url.startsWith('/api/grid?') ? 5 * 60000 : url === '/api/cyclones' ? 15 * 60000 : 24 * HOUR),
   });
   if (memo.size > 90) memo.delete(memo.keys().next().value);
   return p;
@@ -284,7 +284,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
         s = sample(g, ...point);
       if (s?.value != null && row) {
         const delta = Math.abs(row.temp - s.value);
-        compare = `<p class="compare"><b>${escape(place[1])} · ${clockTime(row.time)}</b>　主预报 ${fmtNum(row.temp, 1)}℃，GFS 最近格点 ${fmtNum(s.value, 1)}℃。两份预报相差 ${fmtNum(delta, 1)}℃。</p>`;
+        compare = `<p class="compare"><b>${escape(place[1])} · ${clockTime(row.time)}</b>　主预报 ${fmtNum(row.temp, 1)}℃，${escape(g.source)} 最近格点 ${fmtNum(s.value, 1)}℃。两份预报相差 ${fmtNum(delta, 1)}℃。</p>`;
       }
     }
     const reading = layers.map((choice, i) => {
@@ -314,7 +314,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const auto = Object.values(items).find((g) => g?.autoRole);
     if (!c && auto) {
       const explanation = Number.isFinite(auto.selectionPressure)
-        ? (cursor ? '选点' : place[1]) + '附近的模式地面气压为 ' + fmtNum(auto.selectionPressure) + ' hPa。自动选层以此格点、此时次为准，山峰与峡谷的实际地势可能不同。'
+        ? (cursor ? '选点' : place[1]) + '附近的模式地面气压为 ' + fmtNum(auto.selectionPressure) + ' hPa（' + (auto.selectionPressureSource || auto.source) + '）。选层以此格点、此时次为准，山峰与峡谷的实际地势可能不同。'
         : '该点的模式地面气压暂缺，近地层使用离地 10 米风。';
       $('.reading-main', el).insertAdjacentHTML('beforeend', '<p class="compare">' + escape(explanation) + '</p>');
     }
@@ -356,7 +356,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
       const g = items[i],
         el = $('.point-read', p);
       if (!cursor) {
-        el.textContent = g?.values ? '点击地图读取格点值' : '';
+        el.textContent = g?.pointStatus==='missing' ? '此时次各源未补到选点，周边格点可点读' :
+          g?.pointStatus==='terrain' ? '选点的气压面位于模式地面或地下' : g?.values ? '点击地图读取格点值' : '';
         return;
       }
       const v = valueFor(g, layers[i] === 'zonal' ? 'zonal' : g?.layer || layers[i], ...cursor);
@@ -433,8 +434,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     const batch = t < Date.parse(run) ? Math.floor(t / (6 * HOUR)) * 6 * HOUR : Date.parse(run);
     const lead = Math.floor((t - batch) / (3 * HOUR)) * 3;
-    const gridUrl = '/api/grid?run=' + encodeURIComponent(new Date(batch).toISOString()) + '&lead=' + lead + '&layer=';
-    return loadLevel(layer, cursor || point, (key) => resource(gridUrl + key));
+    return resource(liveGridUrl(new Date(batch).toISOString(), lead, layer, cursor || point));
   }
   async function refresh() {
     if (!ctx.active) return;
@@ -475,9 +475,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
               ? g.valid + ' UTC'
               : validText(g.valid);
           const src = $('.map-source', p);
-          const level = g.autoRole ? layerNames[g.layer] + ' · ' : '';
-          src.textContent = level + g.source + ' · ' + valid + (g.type === '卫星日合成' ? ' · 黑区为缺测' : '');
-          src.title = g.run ? '起报 ' + validText(g.run) + '，有效 ' + valid : g.source;
+          const level = g.autoRole ? actualLevel(g, layerNames) + ' · ' : '';
+          src.textContent = level + sourceName(g) + ' · ' + valid + (g.type === '卫星日合成' ? ' · 黑区为缺测' : '');
+          src.title = g.run ? [
+            g.channel, '起报 ' + validText(g.run), '有效 ' + valid,
+            g.resolution && '原始网格 ' + g.resolution,
+            g.preferredLayer && g.layer !== g.preferredLayer && '首选层在此点缺少可用值',
+            g.terrainReference && '同时参考 ' + g.terrainReference + ' 地形',
+          ].filter(Boolean).join(' · ') : g.source;
           if (g.values && layer !== 'zonal') {
             const l = legend(g.layer);
             $('.color-scale', p).innerHTML =
@@ -564,9 +569,19 @@ export async function showMaps({ main, ctx, place, params }, c) {
   zb[2].onclick = () => {
     bbox = originalBox.slice();
     cursor = null;
-    if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) void refresh();
-    else repaint();
+    readPoint();
   };
+  function readPoint() {
+    const reload = !c && layers.some((id, i) => {
+      if (Object.hasOwn(automaticLayers, id)) return true;
+      const grid = items[i];
+      if (!grid?.values) return false;
+      const value = sample(grid, ...(cursor || point));
+      return grid.backupSource || grid.pointStatus === 'missing' || (value && value.value === null && !value.belowGround);
+    });
+    if (reload) { stop(); void refresh(); }
+    else { repaint(); renderReading(); }
+  }
   $('.guide-switch').onclick = (e) => {
     showGuide = !showGuide;
     e.currentTarget.setAttribute('aria-pressed', String(showGuide));
@@ -601,8 +616,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
             90 -
             ((e.clientX - cv.getBoundingClientRect().left - 30) / Math.max(1, cv.clientWidth - 58)) *
               180;
-        if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) { stop(); void refresh(); }
-        else { repaint(); renderReading(); }
+        readPoint();
       }
       start = null;
     };
@@ -616,8 +630,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       cursor = cursor || [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
       const step = items[i]?.step || 1;
       cursor = [cursor[0] + moves[e.key][0] * step, cursor[1] + moves[e.key][1] * step];
-      if (!c && layers.some((id) => Object.hasOwn(automaticLayers, id))) { stop(); void refresh(); }
-      else { repaint(); renderReading(); }
+      readPoint();
     };
   });
   if (c && ['bohai', 'bohai22'].includes(c.id)) {

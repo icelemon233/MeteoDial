@@ -3,7 +3,8 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const inflight = new Map();
-const userAgent = 'MeteoDial/' + require('../package.json').version + ' (https://github.com/icelemon233/MeteoDial)';
+const userAgent =
+  'MeteoDial/' + require('../package.json').version + ' (https://github.com/icelemon233/MeteoDial)';
 let directory;
 let systemFetch;
 function configureTransport(fn) {
@@ -14,13 +15,22 @@ function configureCache(folder) {
   directory = folder;
 }
 async function request(url, options = {}) {
-  const { timeout = 15000, headers = {}, ...rest } = options;
+  const {
+    timeout = 15000,
+    headers = {},
+    preferSystem = false,
+    acceptErrorResponse = false,
+    ...rest
+  } = options;
   const init = () => ({
     ...rest,
     signal: AbortSignal.timeout(timeout),
     headers: { 'User-Agent': userAgent, ...headers },
   });
-  const preferred = systemFetch && new URL(url).hostname.endsWith('.cwa.gov.tw') ? systemFetch : fetch;
+  const preferred =
+    systemFetch && (preferSystem || new URL(url).hostname.endsWith('.cwa.gov.tw'))
+      ? systemFetch
+      : fetch;
   let res;
   try {
     res = await preferred(url, init());
@@ -28,13 +38,21 @@ async function request(url, options = {}) {
     if (!systemFetch || preferred === systemFetch) throw error;
     res = await systemFetch(url, init());
   }
-  if (!res.ok)
-    throw Object.assign(new Error('上游数据服务返回 ' + res.status), { statusCode: res.status });
+  if (!res.ok && !acceptErrorResponse) {
+    await res.body?.cancel();
+    throw Object.assign(new Error('上游数据服务返回 ' + res.status), {
+      statusCode: res.status,
+      retryAfter: res.headers.get('retry-after'),
+    });
+  }
   return res;
 }
 async function cached(key, ttl, loader, { stale = 0 } = {}) {
   if (inflight.has(key)) return inflight.get(key);
-  const target = path.join(directory, crypto.createHash('sha256').update(key).digest('hex') + '.json');
+  const target = path.join(
+    directory,
+    crypto.createHash('sha256').update(key).digest('hex') + '.json',
+  );
   const task = (async () => {
     let old;
     try {
@@ -86,12 +104,13 @@ async function pruneCache(keepBytes = 180 * 1024 * 1024) {
         } catch {
           return null;
         }
-      })
+      }),
   );
   let sum = 0;
   for (const e of entries.filter(Boolean).sort((a, b) => b.time - a.time)) {
     sum += e.size;
-    if (sum > keepBytes || Date.now() - e.time > 30 * 864e5) await fs.unlink(e.file).catch(() => {});
+    if (sum > keepBytes || Date.now() - e.time > 30 * 864e5)
+      await fs.unlink(e.file).catch(() => {});
   }
 }
 module.exports = { configureCache, configureTransport, cached, request, pruneCache };
