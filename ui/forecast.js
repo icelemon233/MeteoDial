@@ -198,19 +198,21 @@ function stats(p) {
     )
     .join('');
 }
-export async function showForecast({ main, ctx, place, search }) {
+export async function showForecast({ main, ctx, place, locationMatch, search }) {
   const placeName = place[7] === 2 && place[3] !== place[1] ? place[3] + ' · ' + place[1] : place[1];
   main.innerHTML = `<div class="page-head"><div><div class="subtitle">${dateText(Date.now(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</div></div><button class="btn reload">${icon('refresh', 15)}更新</button></div>
   <section class="weather-hero"><div class="hero-map"><canvas aria-label="区域高空风场预报"></canvas></div>
     <div class="hero-copy"><button class="hero-location">${icon('pin', 18)}${escape(placeName)}${icon('down', 13)}</button>
-      <div id="now-temp" class="big-temp">—<sup>°</sup></div><div id="hero-change" class="hero-change">正在读取预报…</div><div id="hero-sub" class="hero-sub"></div></div>
+      <div id="now-temp" class="big-temp">—<sup>°</sup></div><div id="obs-line" class="observation-line">正在查询附近站报…</div><div id="hero-change" class="hero-change">正在读取预报…</div><div id="hero-sub" class="hero-sub"></div></div>
     <div class="hero-atlas"><span id="map-stamp">区域天气图</span><a id="hero-open" href="#/maps" class="glass-button">展开天气图 ${icon('out', 15)}</a></div></section>
   <div id="weather-details" class="loading">正在读取逐小时与逐日预报…</div>`;
   $('.hero-location', main).onclick = search;
   let data,
     station,
+    stationReport,
     observationState = 'loading',
-    observationRequest = 0,
+    lastStationCheck = 0,
+    checkingStation = false,
     metric = 'temp',
     grid,
     busy = false,
@@ -262,27 +264,95 @@ export async function showForecast({ main, ctx, place, search }) {
     }
   };
   void loadMap();
+  const reference = locationMatch ? '定位' : '区县代表点';
+  const selections = locationMatch ? [locationMatch.national, ...locationMatch.airports].filter(Boolean) : [];
+  const stationQuery = new URLSearchParams({ id: place[0] });
+  if (locationMatch) {
+    stationQuery.set('national', locationMatch.national?.id || 'none');
+    stationQuery.set('airports', locationMatch.airports.map((s) => s.id).join(','));
+  }
+  function missingNational() {
+    const closest = stationReport?.closest;
+    if (!closest) return '';
+    const why = stationReport.nationalState === 'unavailable' ? '查询暂不可用' : '暂无三小时内气温';
+    const km = locationMatch?.national?.id === closest.id ? locationMatch.national.km : closest.km;
+    const distanceText = Number.isFinite(km) ? ` · 距${reference}约 ${fmtNum(km, 1)} km` : '';
+    return `${closest.name}国家站 ${closest.id}${distanceText} · ${why}`;
+  }
+  function stationDetails() {
+    const s = station;
+    if (!s) return;
+    const isNational = s.kind === 'national';
+    const rows = [['气温', s.temp, '°C', s.time]];
+    if (isNational) {
+      for (const [key, label, unit] of [
+        ['rh', '相对湿度', '%'], ['wind2m', '两分钟平均风速', 'm/s'], ['windDirection2m', '两分钟平均风向', '°'],
+        ['stationPressure', '本站气压', 'hPa'], ['rain1h', '过去一小时降水', 'mm'],
+      ]) {
+        const f = s.fields?.[key];
+        rows.push([label, f?.value, unit, f?.time]);
+      }
+    }
+    const body = rows.map(([name, value, unit, time]) => {
+      let reading = '—';
+      if (Number.isFinite(value)) {
+        if (unit === '°') {
+          const speed = s.fields.wind2m;
+          reading = speed?.value === 0 && speed.time === time ? '静风' : windDir(value) + '（' + fmtNum(value) + '°）';
+        } else {
+          reading = fmtNum(value, unit === '%' ? 0 : 1) + ' ' + unit;
+        }
+      }
+      return `<tr><th scope="row">${name}</th><td>${reading}</td><td>${time ? validText(time) : '—'}</td></tr>`;
+    }).join('');
+    const reason = !isNational && missingNational();
+    openDialog(`<div class="modal-head"><h2>${escape(isNational ? s.station : s.id)}${isNational ? '国家站' : '航空站'}</h2>${closeButton()}</div><p class="muted">${escape(isNational ? s.id + ' · ' + s.grade : s.station)} · 距${reference}约 ${fmtNum(s.km, 1)} km · ${escape(s.source || 'NOAA AWC')}${s.offline ? '（缓存站报）' : ''}</p><table class="station-readings"><thead><tr><th>要素</th><th>实测值</th><th>观测时间（北京时）</th></tr></thead><tbody>${body}</tbody></table>${reason ? '<p class="muted">' + escape(reason) + '</p>' : ''}`);
+  }
   const drawNow = () => {
-    if (!ctx.active || !data) return;
-    const p = data.current,
-      s = station;
-    $('#now-temp').innerHTML =
-      `${fmtNum(s?.temp ?? p.temp)}<sup>°</sup><span>${wxIcon(p.condition, Number(clockTime(p.time).slice(0, 2)) < 6)}${escape(p.condition)}<small>${s ? '站点实测温度 · 格点天气预报' : '当前格点预报'}</small></span>`;
+    if (!ctx.active) return;
+    const p = data?.current, s = station;
+    const condition = p ? wxIcon(p.condition, Number(clockTime(p.time).slice(0, 2)) < 6) + (s ? '预报' : '') + escape(p.condition) : '';
+    const temperatureLabel = s ? (s.km > 100 ? '远站实测气温' : '实测气温') : p ? '当前格点预报' : '';
+    $('#now-temp').innerHTML = `${fmtNum(s?.temp ?? p?.temp)}<sup>°</sup><span>${condition}<small>${temperatureLabel}</small></span>`;
+    const obs = $('#obs-line', main);
+    if (s) {
+      const label = s.kind === 'national' ? s.station + '国家站 ' + s.id : '航空站 ' + s.id;
+      obs.innerHTML = `<button class="textlink" aria-haspopup="dialog">${escape(label)} · 距${reference}约 ${fmtNum(s.km, 1)} km · ${validText(s.time)} ${icon('out', 12)}</button>`;
+      obs.firstElementChild.onclick = stationDetails;
+    } else {
+      obs.textContent = observationState === 'loading' ? '正在查询附近站报…' :
+        missingNational() || (observationState === 'error' ? '附近站报暂时无法获取' : '100 公里内暂无三小时内站报');
+    }
+    if (!data) return;
     const changeInfo = change(data.hourly);
     showTime = changeInfo.at;
     $('#hero-change').textContent = changeInfo.title;
     $('#hero-sub').textContent = changeInfo.detail;
     $('#hero-open').href = '#/maps?time=' + encodeURIComponent(changeInfo.at);
-    const obs = $('#obs-line', main);
-    if (obs)
-      obs.textContent = s
-        ? `${s.id} 站点实测 ${fmtNum(s.temp, 1)}℃ · 距 ${s.km} km · ${validText(s.time)}`
-        : observationState === 'loading'
-          ? '正在查询附近站报…'
-          : observationState === 'error'
-            ? '站报服务暂不可用，当前显示格点预报'
-            : '附近暂无三小时内站报';
   };
+  async function refreshStation() {
+    if (checkingStation || !ctx.active) return;
+    checkingStation = true;
+    lastStationCheck = Date.now();
+    try {
+      stationReport = await get('/api/station?' + stationQuery, ctx.signal);
+      if (!ctx.active) return;
+      station = stationReport.station;
+      if (station && locationMatch) {
+        const selected = selections.find((s) => s.id === station.id);
+        station = selected ? { ...station, km: selected.km } : null;
+      }
+      observationState = station ? 'ready' :
+        stationReport.aviationUnavailable || stationReport.nationalState === 'unavailable' ? 'error' : 'empty';
+    } catch {
+      station = null;
+      stationReport = null;
+      observationState = 'error';
+    } finally {
+      checkingStation = false;
+      drawNow();
+    }
+  }
   const renderDetail = () => {
     const hourly = data.hourly,
       current = data.current;
@@ -298,7 +368,7 @@ export async function showForecast({ main, ctx, place, search }) {
     $('#weather-details').className = '';
     $('#weather-details').innerHTML =
       `${data.offline ? '<div class="notice">连接暂不可用，显示仍在有效期内的缓存预报。</div>' : ''}
-      <div class="stats-band">${stats(current)}<div class="source-meta"><span>主预报 · MET Norway</span><b>${validText(data.issued)} 更新</b><small id="obs-line"></small></div></div>
+      <div class="stats-band">${stats(current)}<div class="source-meta"><span>格点预报 · MET Norway</span><b>${validText(data.issued)} 更新</b></div></div>
       <div class="home-grid"><div class="home-left"><section class="panel hour-panel"><div class="section-top"><h2>${icon('time')}逐小时预报</h2><div id="metrics" class="seg">${Object.entries(
         metrics
       )
@@ -343,29 +413,15 @@ export async function showForecast({ main, ctx, place, search }) {
     busy = true;
     clearTimeout(refreshTimer);
     $('.reload').disabled = true;
-    station = null;
-    observationState = 'loading';
-    const observationVersion = ++observationRequest;
+    void refreshStation();
     try {
       data = await get('/api/forecast?id=' + place[0], ctx.signal);
       if (!ctx.active) return;
       renderDetail();
-      void get('/api/station?id=' + place[0], ctx.signal)
-        .then((info) => {
-          if (ctx.active && observationVersion === observationRequest) {
-            station = info.station;
-            observationState = station ? 'ready' : 'empty';
-            drawNow();
-          }
-        })
-        .catch(() => {
-          if (ctx.active && observationVersion === observationRequest) {
-            observationState = 'error';
-            drawNow();
-          }
-        });
     } catch (e) {
       if (ctx.active) {
+        data = null;
+        drawNow();
         $('#weather-details').className = 'panel';
         $('#weather-details').innerHTML =
           failBox(e.message) +
@@ -374,6 +430,7 @@ export async function showForecast({ main, ctx, place, search }) {
           '</a>';
         $('.retry').onclick = refresh;
         $('#hero-change').textContent = '预报暂时无法更新';
+        $('#hero-sub').textContent = '';
       }
     } finally {
       busy = false;
@@ -394,12 +451,15 @@ export async function showForecast({ main, ctx, place, search }) {
     }
   }
   const resume = () => {
-    if (ctx.active && !document.hidden && nextForecastCheck && Date.now() >= nextForecastCheck)
-      void refresh();
+    if (!ctx.active || document.hidden) return;
+    if (nextForecastCheck && Date.now() >= nextForecastCheck) void refresh();
+    else if (Date.now() - lastStationCheck >= 5 * 60000) void refreshStation();
   };
+  const stationTimer = setInterval(resume, 5 * 60000);
   document.addEventListener('visibilitychange', resume);
   ctx.onClose(() => {
     clearTimeout(refreshTimer);
+    clearInterval(stationTimer);
     chartObserver?.disconnect();
     document.removeEventListener('visibilitychange', resume);
   });

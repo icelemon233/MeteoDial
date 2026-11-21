@@ -5,4 +5,5 @@ contextBridge.exposeInMainWorld('guanxiang', {
   save: (patch) => ipcRenderer.invoke('guanxiang:save', patch),
   quit: () => ipcRenderer.invoke('guanxiang:quit'),
   hide: () => ipcRenderer.invoke('guanxiang:hide'),
+  locate: () => ipcRenderer.invoke('guanxiang:locate'),
 });

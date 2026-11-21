@@ -230,11 +230,11 @@ main > * {
   font-weight: 530;
   font-size: 12px;
 }
-.source-meta small {
-  font-size: 12px;
-  line-height: 1.45;
-  color: var(--muted);
-}
+.observation-line { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+.observation-line .textlink { padding: 0; text-align: left; line-height: 1.55; }
+.station-readings { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+.station-readings th, .station-readings td { padding: 8px 4px; text-align: left; border-bottom: 1px solid var(--line); }
+.station-readings th { font-weight: 500; }
 .home-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr);
@@ -808,6 +808,9 @@ dialog::backdrop {
   font-size: 20px;
   font-weight: 650;
 }
+.place-controls { display: flex; gap: 8px; flex-wrap: wrap; }
+.place-controls .search-input { flex: 1 1 180px; }
+#location-status:not(:empty) { margin-top: 8px; font-size: 13px; }
 .search-input {
   display: flex;
   align-items: center;

@@ -88,8 +88,11 @@ export function wxIcon(c, night = false) {
     22
   );
 }
-export async function get(url, signal) {
-  const res = await fetch(url, { signal });
+export function get(url, signal) {
+  return requestJson(url, { signal });
+}
+export async function requestJson(url, options) {
+  const res = await fetch(url, options);
   let data;
   try {
     data = await res.json();

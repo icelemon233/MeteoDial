@@ -3,5 +3,6 @@
 *.png binary
 *.jpg binary
 *.ico binary
+assets/data/cma_national_station_info.dat -text whitespace=cr-at-eol
 assets/licences/** -whitespace
 installer/inno/licenses/** -whitespace

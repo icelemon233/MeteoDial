@@ -1,6 +1,7 @@
 import { prefs, save, showSettings, migrateLocation } from './shell.js';
 import {
   get,
+  requestJson,
   $,
   $$,
   icon,
@@ -35,22 +36,53 @@ const [places, catalog] = await Promise.all([
 const byId = new Map(places.map((p) => [p[0], p]));
 await migrateLocation(byId);
 let place = byId.get(prefs.place) || byId.get('371002'),
-  ctx;
+  ctx, locationMatch;
 let recent = prefs.recent.filter((id) => byId.has(id)).slice(0, 5);
-function selectPlace(id) {
+function selectPlace(id, match = null) {
   if (!byId.has(id)) return;
+  locationMatch = match;
   place = byId.get(id);
   recent = [...new Set([id, ...recent])].slice(0, 5);
   void save({ place: id, recent }).catch(() => {});
   if (location.hash === '#/weather') route();
   else location.hash = '/weather';
 }
+async function localPosition() {
+  if (window.guanxiang?.locate) return window.guanxiang.locate();
+  if (!navigator.geolocation) return { status: 'unavailable' };
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ lat: coords.latitude, lon: coords.longitude }),
+      (error) => resolve({ status: error.code === 1 ? 'denied' : 'unavailable' }),
+      { timeout: 15000, maximumAge: 300000 },
+    );
+  });
+}
 function searchDialog() {
   openDialog(
-    `<div class="modal-head"><h2>选择地点</h2>${closeButton()}</div><div class="search-input">${icon('search', 19)}<input id="place-query" autocomplete="off" aria-label="搜索城市、区县或拼音" placeholder="输入城市、区县或拼音"></div><div class="results" id="results" role="listbox" aria-label="地点结果"></div>`,
+    `<div class="modal-head"><h2>选择地点</h2>${closeButton()}</div><div class="place-controls"><div class="search-input">${icon('search', 19)}<input id="place-query" autocomplete="off" aria-label="搜索城市、区县或拼音" placeholder="输入城市、区县或拼音"></div><button class="btn" id="locate">${icon('pin', 16)}使用我的位置</button></div><p id="location-status" role="status" class="muted"></p><div class="results" id="results" role="listbox" aria-label="地点结果"></div>`,
     (d) => {
       const q = $('#place-query'),
         res = $('#results');
+      const locate = $('#locate', d), status = $('#location-status', d);
+      locate.onclick = async () => {
+        locate.disabled = true;
+        status.textContent = '正在获取位置…';
+        try {
+          const position = await localPosition();
+          if (!d.open || !locate.isConnected) return;
+          if (position.status === 'denied') throw Error('位置权限已关闭，可在系统或浏览器设置中开启，也可搜索地点。');
+          if (position.status || !Number.isFinite(position.lat) || !Number.isFinite(position.lon))
+            throw Error('暂时无法定位，请重试或搜索地点。');
+          const match = await requestJson('/local/nearest', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ lat: position.lat, lon: position.lon }),
+          });
+          if (d.open && locate.isConnected) { d.close(); selectPlace(match.place, match); }
+        } catch (err) {
+          if (d.open && locate.isConnected) status.textContent = err.message || '暂时无法定位，可搜索地点。';
+        } finally { locate.disabled = false; }
+      };
       let list = [],
         selected = 0;
       function update() {
@@ -151,11 +183,11 @@ $('#dialog').addEventListener('click', (e) => {
 $('#sources').onclick = () =>
   openDialog(`<div class="modal-head"><h2>数据来源</h2>${closeButton()}</div><dl class="source-list">
 <dt>区县预报</dt><dd>MET Norway Locationforecast，卫星与地面观测同化后的格点预报。区县名称对应代表点，逐日范围由源时间序列汇总。${safeLink('https://docs.api.met.no/doc/locationforecast/datamodel.html', '数据说明')} ${safeLink('https://creativecommons.org/licenses/by/4.0/', 'CC BY 4.0')}</dd>
-<dt>地面观测</dt><dd>显示距地点 100 公里内有近期站报的航空气象站，注明站号、距离与观测时间。${safeLink('https://aviationweather.gov/data/api/', 'NOAA Aviation Weather Center')}</dd>
+<dt>地面观测</dt><dd>按定位或区县代表点从 2,420 个内地国家站中选最近站，距离按 2021 年站表估算。气温取三小时内的实测，距站超过 100 公里会标为远站。国家站缺报时查询 100 公里内的航空站。${safeLink('https://q-weather.info/apidoc/', '查天气 API')} ${safeLink('https://github.com/nmcdev/nmc_met_graphics/blob/4fcbfddaf551f04cd8e88b6374b87c766ffc4ec7/nmc_met_graphics/resources/stations/cma_national_station_info.dat', '国家站表')} ${safeLink('https://aviationweather.gov/data/api/', 'NOAA AWC')}</dd>
 <dt>高空与地面图</dt><dd>NOAA GFS 原始 GRIB2。等值线、箭头和颜色由观象绘制。${safeLink('https://www.noaa.gov/information-technology/open-data-dissemination', 'NOAA 开放资料')}</dd>
 <dt>卫星观测</dt><dd>近期红外云图来自日本气象厅葵花卫星。案例云图取自 NASA GIBS 的 MODIS Terra 真彩色日合成，并叠加地理标注。${safeLink('https://www.data.jma.go.jp/mscweb/en/general/note.html', '日本气象厅使用说明')} ${safeLink('https://www.earthdata.nasa.gov/data/tools/gibs', 'NASA GIBS')}</dd>
 <dt>台风与气候</dt><dd>近期路径由香港天文台发布，历史最佳路径取自日本气象厅 RSMC Tokyo。气候平均采用 NOAA PSL 的 NCEP/NCAR 1991—2020 常年值。${safeLink('https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info', '香港天文台')} ${safeLink('https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.derived.html', 'NOAA PSL')}</dd>
-<dt>区域雷达</dt><dd>CWA 雷达整合回波图覆盖台湾及邻近海域。保留原图地理范围、时次与回波图例，每十分钟的回放取自原机构图像目录。${safeLink('https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html', '雷达实况')} ${safeLink('https://data.gov.tw/dataset/75125', '开放资料说明')}</dd>
+<dt>区域雷达</dt><dd>CWA 整合回波图覆盖台湾及邻近海域。内地单站雷达可在中央气象台选择城市查看。${safeLink('https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html', 'CWA 雷达')} ${safeLink('https://data.gov.tw/dataset/75125', '开放资料说明')} ${safeLink('https://www.nmc.cn/publish/radar/shan-dong/qing-dao.htm', '中央气象台单站雷达')}</dd>
 <dt>地理资料</dt><dd>地点来自 AreaCity 区划索引及公开行政区地理资料，地理底图采用 Natural Earth，航空站位置来自 OurAirports。${safeLink('https://github.com/xiangyuecn/AreaCity-JsSpider-StatsGov', 'AreaCity')} ${safeLink('https://www.naturalearthdata.com/about/terms-of-use/', 'Natural Earth')}</dd></dl>`);
 function tick() {
   $('#clock').innerHTML = icon('time', 14) + clockTime(Date.now()) + ' <span>北京时间</span>';
@@ -189,7 +221,7 @@ function route() {
       : '<h1>' + escape(label) + '</h1>';
   document.title = label + ' · MeteoDial';
   main.scrollTop = 0;
-  const env = { main, ctx, place, catalog, params, search: searchDialog };
+  const env = { main, ctx, place, locationMatch, catalog, params, search: searchDialog };
   const task =
     key === 'settings'
       ? showSettings(env)

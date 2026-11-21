@@ -17,6 +17,7 @@ app.setName('观象');
 app.setAppUserModelId('org.guanxiang.weather');
 const { preferences } = require('./preferences.cjs');
 const { migrateLocationOnce } = require('./legacy-location.cjs');
+const { locateWindows } = require('./windows-location.cjs');
 const { TrayMenu } = require('./tray-menu.cjs');
 const contract = require('./window-shell.json');
 const qaIndex = process.argv.indexOf('--qa-data');
@@ -131,6 +132,8 @@ const allowed = [
   'ourairports.com',
   'tcdata.typhoon.org.cn',
   'aviationweather.gov',
+  'q-weather.info',
+  'data.cma.cn',
   'creativecommons.org',
   'noaa-gfs-bdp-pds.s3.amazonaws.com',
   'data.gov.tw',
@@ -224,6 +227,7 @@ else {
         return updated;
       });
       handle('quit', () => app.quit());
+      handle('locate', locateWindows);
       handle('hide', enterTray);
       nativeTheme.on('updated', () => {
         if (window && !window.isDestroyed()) window.setTitleBarOverlay(overlay());

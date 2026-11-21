@@ -1,7 +1,6 @@
 'use strict';
 const { cached, request } = require('./network.cjs');
-const places = require('../assets/data/places.json'),
-  airports = require('../assets/data/stations.json');
+const places = require('../assets/data/places.json');
 const byId = new Map(places.map((p) => [p[0], p]));
 const H = 36e5;
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
@@ -81,56 +80,6 @@ function daysFrom(series, startDate) {
     };
   });
 }
-function km(a, b, c, d) {
-  const rad = Math.PI / 180,
-    p =
-      Math.sin(((c - a) * rad) / 2) ** 2 +
-      Math.cos(a * rad) * Math.cos(c * rad) * Math.sin(((d - b) * rad) / 2) ** 2;
-  return 12742 * Math.asin(Math.min(1, Math.sqrt(p)));
-}
-async function stationFor(place) {
-  const sites = airports
-    .map((s) => ({ s, dist: km(place[4], place[5], s[1], s[2]) }))
-    .filter((p) => p.dist < 100)
-    .sort((a, b) => a.dist - b.dist)
-    .slice(0, 4);
-  if (!sites.length) return null;
-  const ids = sites.map((p) => p.s[0]).join(',');
-  const obj = await cached(
-    'metar-v2:' + ids,
-    20 * 60000,
-    async () => {
-      const res = await request(
-        'https://aviationweather.gov/api/data/metar?ids=' + ids + '&format=json&hours=4',
-        { timeout: 7000 }
-      );
-      const list = res.status === 204 ? [] : await res.json();
-      if (!Array.isArray(list)) throw Error('航空站报格式异常');
-      return { value: { list } };
-    },
-    { stale: 3 * H }
-  );
-  for (const { s, dist } of sites) {
-    const m = obj.list
-      .filter(
-        (m) =>
-          m.icaoId === s[0] && num(m.temp) !== null && Date.now() - Number(m.obsTime) * 1000 <= 3 * H
-      )
-      .sort((a, b) => b.obsTime - a.obsTime)[0];
-    if (m)
-      return {
-        id: s[0],
-        station: s[3],
-        km: Math.round(dist),
-        time: new Date(m.obsTime * 1000).toISOString(),
-        temp: m.temp,
-        wind: num(m.wspd) === null ? null : Math.round(m.wspd * 0.51444 * 10) / 10,
-        pressure: num(m.altim),
-        direction: num(m.wdir),
-      };
-  }
-  return null;
-}
 async function forecast(id) {
   const p = byId.get(id);
   if (!p) throw Error('地点不存在');
@@ -161,4 +110,4 @@ async function forecast(id) {
     daily: daysFrom(value.series, dayOf(new Date().toISOString())),
   };
 }
-module.exports = { forecast, stationFor, byId, normalize, daysFrom, symbol };
+module.exports = { forecast, byId, normalize, daysFrom, symbol };

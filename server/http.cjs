@@ -2,7 +2,8 @@
 const http = require('node:http'),
   fs = require('node:fs/promises'),
   path = require('node:path');
-const { forecast, stationFor, byId } = require('./weather.cjs');
+const { forecast, byId } = require('./weather.cjs');
+const { matchLocation, matchFromQuery, observations } = require('./stations.cjs');
 const { fields, readGrid, latestRun } = require('./grids.cjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
 const { satellite, cyclones, radar, radarIndex } = require('./sky.cjs');
@@ -26,7 +27,7 @@ async function api(url) {
     case '/api/station': {
       const p = byId.get(q.get('id'));
       if (!p) throw Error('地点不存在');
-      return { station: await stationFor(p) };
+      return observations(matchFromQuery(p, q));
     }
     case '/api/run':
       return latestRun();
@@ -95,11 +96,9 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
   const server = http.createServer(async (req, res) => {
     try {
       const host = '127.0.0.1:' + server.address().port;
-      if (
-        req.headers.host !== host ||
-        (req.headers.origin && req.headers.origin !== 'http://' + host) ||
-        req.method !== 'GET'
-      ) {
+      const localMatch = req.method === 'POST' && req.url === '/local/nearest';
+      if (req.headers.host !== host || (req.headers.origin && req.headers.origin !== 'http://' + host) ||
+          (req.method !== 'GET' && !localMatch)) {
         res.writeHead(403);
         return res.end();
       }
@@ -110,6 +109,25 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
       );
       const url = new URL(req.url, 'http://' + host);
+      if (localMatch) {
+        if (req.headers.origin !== url.origin || req.headers['content-type'] !== 'application/json') {
+          res.writeHead(403);
+          return res.end();
+        }
+        let body = '';
+        for await (const chunk of req) {
+          if (body.length + chunk.length > 256) {
+            res.writeHead(413);
+            return res.end();
+          }
+          body += chunk.toString('utf8');
+        }
+        let coordinates;
+        try { coordinates = JSON.parse(body); } catch { throw Object.assign(Error('定位格式无效'), { statusCode: 400 }); }
+        const match = matchLocation(coordinates?.lat, coordinates?.lon);
+        res.writeHead(200, { 'Content-Type': mime['.json'], 'Cache-Control': 'no-store' });
+        return res.end(JSON.stringify(match));
+      }
       if (url.pathname.startsWith('/api/')) {
         if (!routes.has(url.pathname)) {
           res.writeHead(404);
@@ -144,7 +162,8 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
       res.end(content);
     } catch (err) {
       if (!res.destroyed && !res.headersSent) {
-        res.writeHead(err.code === 'ENOENT' || err.statusCode === 404 ? 404 : 502, {
+        const status = err.code === 'ENOENT' ? 404 : [400, 404, 422].includes(err.statusCode) ? err.statusCode : 502;
+        res.writeHead(status, {
           'Content-Type': mime['.json'],
           'Cache-Control': 'no-store',
         });

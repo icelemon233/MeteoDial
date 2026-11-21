@@ -11,7 +11,7 @@ MeteoDial (观象) is a Windows weather app by Cinna. Look up a city or county i
 
 ## Using MeteoDial
 
-Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyin. The local view covers the next 48 hours by hour and the next 10 days by day. Observations include the station, distance and report time when a recent nearby station report is available.
+Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyin. In the development build, **使用我的位置** (Use my location) finds the nearest national station in the bundled directory. Select the station to see each measurement and its observation time. The local forecast covers the next 48 hours by hour and the next 10 days by day.
 
 In **天气图** (Weather maps), drag the shared timeline to compare wind, temperature, pressure, upper-air contours or satellite imagery. Each panel shows its source and valid time. Live radar covers Taiwan and its adjacent waters.
 
