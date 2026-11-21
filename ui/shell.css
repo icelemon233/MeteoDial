@@ -380,8 +380,19 @@ select {
   gap: 12px;
 }
 select::picker-icon {
-  content: '⌄';
-  color: var(--muted);
+  content: '';
+  align-self: center;
+  flex: none;
+  width: 12px;
+  height: 8px;
+  background: var(--muted);
+  clip-path: polygon(0 1.75px, 1.5px .25px, 6px 4.75px, 10.5px .25px, 12px 1.75px, 6px 7.75px);
+}
+@media (forced-colors: active) {
+  select::picker-icon {
+    forced-color-adjust: none;
+    background: ButtonText;
+  }
 }
 ::picker(select) {
   background: var(--surface);

@@ -7,7 +7,7 @@ const defaults = {
   closeBehavior: 'tray',
   recent: [],
   place: '',
-  version: '0.3.1',
+  version: '0.3.2',
 };
 function saved(key, fallback) {
   try {
@@ -21,6 +21,15 @@ export const prefs = Object.assign(
   defaults,
   host ? await host.read() : saved('guanxiang.settings', {}),
 );
+function saveErrorMessage(error) {
+  // Electron IPC preserves the filesystem error in the message but drops its code property.
+  const code = error?.code || error?.message?.match(/(?:^|:\s+)(E[A-Z]+):/)?.[1];
+  if (code === 'ENOSPC' || code === 'EDQUOT' || error?.name === 'QuotaExceededError')
+    return '无法保存偏好。请释放存储空间后重试。';
+  if (['EACCES', 'EPERM', 'EBUSY', 'EROFS'].includes(code) || error?.name === 'SecurityError')
+    return '无法保存偏好。请检查写入权限或文件占用后重试。';
+  return '无法保存偏好。请稍后重试。';
+}
 export async function save(patch) {
   try {
     if (host) await host.save(patch);
@@ -35,7 +44,7 @@ export async function save(patch) {
   } catch (error) {
     const note = document.querySelector('#settings-error') || $('#announce');
     note.className = 'notice pref-error';
-    note.textContent = '无法保存偏好。' + error.message;
+    note.textContent = saveErrorMessage(error);
     throw error;
   }
 }
@@ -72,6 +81,9 @@ if (host) {
       $('#announce').textContent = error.message;
     });
 }
+const pendingSettings = new Map();
+let settingsQueue = Promise.resolve();
+
 export function showSettings({ main }) {
   main.innerHTML =
     '<div class="settings-page"><section class="settings-card panel"><h2>外观与窗口</h2><label>主题<select id="theme-choice"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>' +
@@ -89,16 +101,22 @@ export function showSettings({ main }) {
   ]) {
     const select = document.getElementById(id);
     if (!select) continue;
-    select.value = prefs[key];
-    select.onchange = async () => {
-      select.disabled = true;
-      try {
-        await save({ [key]: select.value });
-      } catch {
-        select.value = prefs[key];
-      } finally {
-        select.disabled = false;
-      }
+    select.value = pendingSettings.get(key)?.value ?? prefs[key];
+    select.onchange = () => {
+      const change = { value: select.value };
+      pendingSettings.set(key, change);
+      settingsQueue = settingsQueue.then(async () => {
+        try {
+          await save({ [key]: change.value });
+        } catch {
+          // save reports the error and keeps the last persisted preference.
+        }
+        if (pendingSettings.get(key) === change) {
+          pendingSettings.delete(key);
+          const current = document.getElementById(id);
+          if (current) current.value = prefs[key];
+        }
+      });
     };
   }
   if (host) $('#quit-app').onclick = () => host.quit();
