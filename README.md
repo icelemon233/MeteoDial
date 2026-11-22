@@ -13,7 +13,7 @@ MeteoDial (观象) is a Windows weather app by Cinna. Look up a city or county i
 
 Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyin. **使用我的位置** (Use my location) finds the nearest national station in the bundled directory. Select the station to see each measurement and its observation time. The local forecast covers the next 48 hours by hour and the next 10 days by day.
 
-In **天气图** (Weather maps), compare upper-air patterns, lower-level transport and near-surface wind at the same time. If a GFS field or the selected grid point is missing, the app checks ECMWF IFS and the NOAA GEFS control forecast at the same level, initialization and valid time. Automatic mode can also try one neighbouring level. Each panel identifies the field and source it actually displays. Gray cells mark a pressure surface at or below model terrain.
+**天气图** (Weather maps) opens with a 16:9 map of China. Switch to two or four panels to compare upper-air patterns, lower-level transport and near-surface wind at the same valid time. The timeline loops automatically. Drag it to pause on a particular frame. If a GFS field or the selected grid point is missing, the app checks ECMWF IFS and the NOAA GEFS control forecast at the same level, initialization and valid time. Each panel identifies its field and source. Gray cells mark a pressure surface at or below model terrain.
 
 **天气案例** (Case studies) includes 13 offline map replays, including a Beijing snowfall, the 2008 southern China ice storms, the January 2016 cold wave and the July 2021 Henan floods. Open **重大气象灾害档案** to search event analyses since 2001 by year, place or hazard. Each entry links to its source. [View the Bohai snow case](./docs/previews/bohai-snow.png)
 

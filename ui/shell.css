@@ -347,9 +347,6 @@ select {
 .map-message {
   color: white;
 }
-.map-body {
-  height: clamp(220px, 22vw, 390px);
-}
 .map-footer,
 .point-read,
 .kind,
@@ -544,11 +541,15 @@ dialog::backdrop {
     grid-column: 1/-1;
     padding-top: 9px;
   }
-  .map-pair {
-    grid-template-columns: 1fr;
-  }
 }
 @media (max-width: 540px) {
+  .map-grid:not([data-count='1']) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .map-heading {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
   .clock {
     display: none;
   }

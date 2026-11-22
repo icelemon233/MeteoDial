@@ -1,6 +1,6 @@
 'use strict';
 const { sources, fields, fieldError } = require('./grid-sources.cjs');
-const { readProviderGrid } = require('./grids.cjs');
+const { readLiveGrid } = require('./grids.cjs');
 const { automaticLayers, levelChoices, suitable, validPressure } = require('../shared/levels.mjs');
 
 function hasValue(grid, index) {
@@ -65,7 +65,7 @@ async function resolveLiveGrid(
   lead,
   choice,
   cell = null,
-  { providers = sources, read = readProviderGrid } = {},
+  { providers = sources, read = readLiveGrid } = {},
 ) {
   const auto = Object.hasOwn(automaticLayers, choice);
   if (!auto && !Object.hasOwn(fields, choice))

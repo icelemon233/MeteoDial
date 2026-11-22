@@ -528,6 +528,7 @@ main > * {
   display: flex;
   align-items: center;
   gap: 14px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 .atlas-region {
@@ -581,10 +582,16 @@ main > * {
 .switch.on:before {
   left: 12px;
 }
-.map-pair {
+.map-heading .guide-switch {
+  margin-inline-start: auto;
+}
+.map-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   gap: 13px;
+}
+.map-grid:not([data-count='1']) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 .map-panel {
   border: 1px solid var(--line);
@@ -624,19 +631,46 @@ main > * {
 .map-body {
   position: relative;
   background: #20394f;
-  height: clamp(220px, 23vw, 410px);
+  aspect-ratio: 16 / 9;
+  isolation: isolate;
+  cursor: crosshair;
+  touch-action: none;
+}
+.map-body:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+.map-body:focus-visible::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 3;
+  border: 2px solid var(--focus);
 }
 .map-body canvas {
+  position: absolute;
+  inset: 0;
   height: 100%;
   width: 100%;
   display: block;
-  cursor: crosshair;
-  touch-action: none;
+  pointer-events: none;
+}
+.map-body canvas.current {
+  z-index: 1;
+}
+.no-frame canvas {
+  visibility: hidden;
+}
+.original-image .map-body {
+  cursor: default;
+  touch-action: auto;
 }
 .map-message {
   display: none;
   position: absolute;
   inset: 0;
+  z-index: 2;
   align-items: center;
   justify-content: center;
   color: var(--muted);

@@ -4,15 +4,20 @@ const path = require('node:path'),
 const root = path.join(__dirname, '..'),
   target = path.join(root, 'assets/cases');
 const catalog = require('../assets/data/catalog.json');
+const archiveBounds = require('../assets/data/archive-domain.json');
 const { configureCache, request } = require('../server/network.cjs');
 const { readGrid } = require('../server/grids.cjs');
 configureCache(process.env.GUANXIANG_BUILD_CACHE || path.join(root, '.data-cache'));
 const H = 36e5;
-async function writeIfMissing(file, fn, force = false) {
+async function writeIfMissing(file, fn, force = false, matches) {
   if (!force) {
     try {
-      await fs.access(file);
-      return;
+      if (matches) {
+        if (matches(await fs.readFile(file, 'utf8'))) return;
+      } else {
+        await fs.access(file);
+        return;
+      }
     } catch {}
   }
   let last;
@@ -28,7 +33,7 @@ async function writeIfMissing(file, fn, force = false) {
   }
   throw last;
 }
-function gibsUrl(date, bbox) {
+function gibsUrl(date, bbox, width) {
   const q = new URLSearchParams({
     SERVICE: 'WMS',
     REQUEST: 'GetMap',
@@ -38,8 +43,8 @@ function gibsUrl(date, bbox) {
     FORMAT: 'image/jpeg',
     SRS: 'EPSG:4326',
     BBOX: bbox.join(','),
-    WIDTH: '840',
-    HEIGHT: String(Math.max(220, Math.round((840 * (bbox[3] - bbox[1])) / (bbox[2] - bbox[0])))),
+    WIDTH: String(width),
+    HEIGHT: String(Math.max(220, Math.round((width * (bbox[3] - bbox[1])) / (bbox[2] - bbox[0])))),
     TIME: date,
   });
   return 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi?' + q;
@@ -98,9 +103,14 @@ async function prepare(c) {
           path.join(folder, layer + '-' + lead + '.json'),
           async () =>
             JSON.stringify(
-              await readGrid(run, lead, layer, c.box, c.resolution || '1p00', c.step || 1)
+              await readGrid(run, lead, layer, 'national', c.resolution || '1p00', c.step || 1)
             ),
-          process.argv.includes('--refresh-grids')
+          process.argv.includes('--refresh-grids'),
+          (text) => {
+            const grid = JSON.parse(text);
+            return grid.layer === layer && Date.parse(grid.run) === Date.parse(run) && grid.lead === lead &&
+              grid.bbox?.length === 4 && grid.bbox.every((v, i) => v === archiveBounds[i]);
+          }
         )
       );
     }
@@ -108,20 +118,27 @@ async function prepare(c) {
   const dates = [
     ...new Set(c.leads.map((h) => new Date(Date.parse(run) + h * H).toISOString().slice(0, 10))),
   ];
-  for (const date of dates)
-    jobs.push(() =>
-      writeIfMissing(path.join(folder, date + '.jpg'), async () => {
-        const r = await request(gibsUrl(date, c.bbox), { timeout: 45000 });
+  for (const date of dates) {
+    for (const [file, bounds, width] of [
+      [date + '.jpg', c.bbox, 840],
+      ['national-' + date + '.jpg', archiveBounds, 1600],
+    ]) {
+      jobs.push(() => writeIfMissing(path.join(folder, file), async () => {
+        const r = await request(gibsUrl(date, bounds, width), { timeout: 60000 });
         const b = Buffer.from(await r.arrayBuffer());
-        if (b[0] !== 255 || b[1] !== 216) throw Error('卫星图格式错误');
+        if (b[0] !== 255 || b[1] !== 216 || b.readUInt16BE(b.length - 2) !== 0xffd9)
+          throw Error('卫星图像不完整');
         return b;
-      })
-    );
+      }));
+    }
+  }
   for (let start = 0; start < jobs.length; start += 4)
     await Promise.all(jobs.slice(start, start + 4).map((j) => j()));
 }
 (async () => {
-  for (const c of catalog) {
+  const selected = process.argv.slice(2).filter((arg) => arg.startsWith('--case=')).map((arg) => arg.slice(7));
+  if (selected.some((id) => !catalog.some((c) => c.id === id))) throw Error('未知案例');
+  for (const c of catalog.filter((c) => !selected.length || selected.includes(c.id))) {
     await prepare(c);
     console.log('Ready:', c.id);
   }

@@ -24,6 +24,8 @@ The upper-air preset starts with the first of 500, 400 and 300 hPa at or below 7
 
 The Beijing snow and Henan rain replays use archived GFS runs. The 2008 and 2016 cases use six-hourly ERA5 fields from WeatherBench 2. To rebuild the offline case assets, run `node scripts/prepare-cases.cjs`, `python scripts/prepare-reanalysis.py` and `python scripts/prepare-covers.py`. The Python scripts use NumPy, numcodecs and Pillow. The disaster archive stores source references, observed impacts and an original reading guide for each entry in `assets/data/disasters.json`.
 
+The historical grids and national MODIS images share the extent in `assets/data/archive-domain.json`. Dated local MODIS images retain their original bounds for close-up views and covers. To rebuild the offline basemap, install pyshp and Shapely 2 or later and run `python scripts/prepare-boundaries.py`. It uses the pinned NMC boundary linework and the Natural Earth 1:50m land and coastline files. The separate coastline layer keeps polygon edges at the date line and poles out of the visible shorelines.
+
 ## Project layout
 
 | Path | Contents |

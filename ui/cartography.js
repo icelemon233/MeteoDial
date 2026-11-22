@@ -2,21 +2,26 @@ import { get, fmtNum, layerUnit, clockTime } from './base.js';
 import { gridIndex } from './levels.js';
 let geography;
 const textures = new WeakMap(),
-  images = new Map();
+  images = new Map(),
+  basemapPaths = new WeakMap();
+export const nationalView = Object.freeze([70, 2.5, 146, 54.5]);
+function indexLines(lines) {
+  return lines.map((points) => {
+    const bounds = [180, 90, -180, -90];
+    for (const [lon, lat] of points) {
+      bounds[0] = Math.min(bounds[0], lon);
+      bounds[1] = Math.min(bounds[1], lat);
+      bounds[2] = Math.max(bounds[2], lon);
+      bounds[3] = Math.max(bounds[3], lat);
+    }
+    return { points, bounds };
+  });
+}
 export function loadLand() {
-  return (geography ||= get('/assets/data/land.json')
-    .then((rings) =>
-      rings.map((points) => {
-        const bounds = [180, 90, -180, -90];
-        for (const [a, b] of points) {
-          bounds[0] = Math.min(bounds[0], a);
-          bounds[1] = Math.min(bounds[1], b);
-          bounds[2] = Math.max(bounds[2], a);
-          bounds[3] = Math.max(bounds[3], b);
-        }
-        return { points, bounds };
-      })
-    )
+  return (geography ||= Promise.all([
+    get('/assets/data/land.json?v=4.1.0'), get('/assets/data/coastlines.json'), get('/assets/data/china-boundaries.json'),
+  ])
+    .then(([land, coast, boundary]) => ({ land: indexLines(land), coast: indexLines(coast), boundary: indexLines(boundary) }))
     .catch((e) => {
       geography = undefined;
       throw e;
@@ -184,36 +189,68 @@ export function sample(g, lon, lat) {
     lat: g.bbox[3] - y * g.step,
   };
 }
-export function extentFor(c, bbox) {
-  const r = c.getBoundingClientRect(),
-    cx = (bbox[0] + bbox[2]) / 2,
-    cy = (bbox[1] + bbox[3]) / 2;
-  if (!r.width || !r.height) return bbox;
-  const ratio = r.width / r.height / Math.max(0.3, Math.cos((cy * Math.PI) / 180));
-  let dw = bbox[2] - bbox[0],
-    dh = bbox[3] - bbox[1];
-  if (dw / dh < ratio) dh = dw / ratio;
-  else dw = dh * ratio;
-  return [cx - dw / 2, cy - dh / 2, cx + dw / 2, cy + dh / 2];
+function boundedAxis(center, span, limit) {
+  const width = Math.min(2 * limit, Math.max(0.001, span));
+  const start = Math.max(-limit, Math.min(limit - width, center - width / 2));
+  return [start, start + width];
 }
-function frame(c, bbox) {
+export function clampView(box) {
+  if (!box || box.length !== 4 || !box.every(Number.isFinite) || box[2] <= box[0] || box[3] <= box[1])
+    return [...nationalView];
+  const [west, east] = boundedAxis((box[0] + box[2]) / 2, box[2] - box[0], 180);
+  const [south, north] = boundedAxis((box[1] + box[3]) / 2, box[3] - box[1], 90);
+  return [west, south, east, north];
+}
+export function panView(box, east, north) {
+  return clampView([box[0] + east, box[1] + north, box[2] + east, box[3] + north]);
+}
+function projection(w, h, requested) {
+  const b = clampView(requested);
+  const cx = (b[0] + b[2]) / 2, cy = (b[1] + b[3]) / 2;
+  // Equidistant cylindrical projection with the viewpoint's centre as standard parallel.
+  const cos = Math.max(0.01, Math.cos(cy * Math.PI / 180));
+  const dw = b[2] - b[0], dh = b[3] - b[1];
+  const ratio = w / h / cos;
+  const [west, east] = boundedAxis(cx, Math.max(dw, dh * ratio), 180);
+  const [south, north] = boundedAxis(cy, Math.max(dh, dw / ratio), 90);
+  const scale = Math.min(w / ((east - west) * cos), h / (north - south));
+  const width = (east - west) * cos * scale, height = (north - south) * scale;
+  return { bbox: [west, south, east, north], width, height, left: (w - width) / 2, top: (h - height) / 2 };
+}
+export function extentFor(canvas, box) {
+  const { width, height } = canvas.getBoundingClientRect();
+  return width && height ? projection(width, height, box).bbox : clampView(box);
+}
+function frame(c, requested, geographic) {
   const r = c.getBoundingClientRect(),
-    w = r.width,
-    h = r.height;
-  if (!w || !h) return null;
+    width = r.width,
+    height = r.height;
+  if (!width || !height) return null;
+  const view = projection(width, height, requested);
+  const { bbox } = view;
+  const w = geographic ? view.width : width, h = geographic ? view.height : height;
   const d = Math.min(window.devicePixelRatio || 1, 2);
-  const cw = Math.round(w * d),
-    ch = Math.round(h * d);
+  const cw = Math.round(width * d),
+    ch = Math.round(height * d);
   if (c.width !== cw || c.height !== ch) {
     c.width = cw;
     c.height = ch;
   }
   const ctx = c.getContext('2d');
   ctx.setTransform(d, 0, 0, d, 0, 0);
-  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = '#182c3d';
+  ctx.fillRect(0, 0, width, height);
+  ctx.save();
+  if (geographic) {
+    ctx.translate(view.left, view.top);
+    ctx.beginPath();
+    ctx.rect(0, 0, w, h);
+    ctx.clip();
+  }
   const x = (a) => ((a - bbox[0]) / (bbox[2] - bbox[0])) * w,
     y = (b) => ((bbox[3] - b) / (bbox[3] - bbox[1])) * h;
   return {
+    bbox,
     ctx,
     w,
     h,
@@ -223,9 +260,9 @@ function frame(c, bbox) {
     lat: (y) => bbox[3] - (y / h) * (bbox[3] - bbox[1]),
   };
 }
-function coastline(f, rings, bbox, fill) {
-  const { ctx, x, y } = f;
-  ctx.beginPath();
+function outlinePath(f, rings, closed) {
+  const { x, y, bbox } = f;
+  const path = new Path2D();
   for (const r of rings) {
     if (
       r.bounds[2] < bbox[0] ||
@@ -237,26 +274,33 @@ function coastline(f, rings, bbox, fill) {
     let first = true,
       px = -1000,
       py = -1000;
-    for (const p of r.points) {
+    for (let i = 0; i < r.points.length; i++) {
+      const p = r.points[i];
       const xx = x(p[0]),
         yy = y(p[1]);
-      if (!first && Math.abs(xx - px) + Math.abs(yy - py) < 1) continue;
+      if (!first && i < r.points.length - 1 && Math.abs(xx - px) + Math.abs(yy - py) < 0.7) continue;
       if (first) {
-        ctx.moveTo(xx, yy);
+        path.moveTo(xx, yy);
         first = false;
-      } else ctx.lineTo(xx, yy);
+      } else path.lineTo(xx, yy);
       px = xx;
       py = yy;
     }
-    ctx.closePath();
+    if (closed) path.closePath();
   }
-  if (fill) {
-    ctx.fillStyle = fill;
-    ctx.fill('evenodd');
-  }
-  ctx.strokeStyle = 'rgba(217,234,238,.72)';
-  ctx.lineWidth = 0.85;
-  ctx.stroke();
+  return path;
+}
+function pathsFor(canvas, frame, geography) {
+  const key = [frame.w, frame.h, ...frame.bbox].join(',');
+  const previous = basemapPaths.get(canvas);
+  if (previous?.key === key) return previous;
+  const paths = { key, land: outlinePath(frame, geography.land, true), coast: outlinePath(frame, geography.coast, false),
+    china: outlinePath(frame, geography.boundary, false) };
+  basemapPaths.set(canvas, paths);
+  return paths;
+}
+function axisLabel(value, negative, positive) {
+  return Math.abs(value) + '°' + (value === 0 || Math.abs(value) === 180 ? '' : value < 0 ? negative : positive);
 }
 function graticule(f, b) {
   const { ctx, x, y, w, h } = f;
@@ -279,9 +323,9 @@ function graticule(f, b) {
   ctx.font = '9px Segoe UI';
   for (let l = Math.ceil(b[0] / inc) * inc; l < b[2]; l += inc)
     if (x(l) > 26 && x(l) < w - 32)
-      ctx.fillText(Math.abs(l) + '°' + (l < 0 ? 'W' : 'E'), x(l) + 3, h - 7);
+      ctx.fillText(axisLabel(l, 'W', 'E'), x(l) + 3, h - 7);
   for (let l = Math.ceil(b[1] / inc) * inc; l < b[3]; l += inc)
-    if (y(l) > 22 && y(l) < h - 22) ctx.fillText(Math.abs(l) + '°' + (l < 0 ? 'S' : 'N'), 5, y(l) - 3);
+    if (y(l) > 22 && y(l) < h - 22) ctx.fillText(axisLabel(l, 'S', 'N'), 5, y(l) - 3);
 }
 function windLines(f, g) {
   const { ctx, w, h, lon, lat } = f;
@@ -389,11 +433,20 @@ function contours(f, g, bbox) {
   ctx.strokeStyle = '#ffe599';
   ctx.lineWidth = 1.4;
   ctx.stroke(highlight);
+  return labels;
+}
+function labelContours(ctx, labels, markers) {
   ctx.font = '10px Consolas,monospace';
   ctx.textAlign = 'center';
   for (const [px, py, level] of labels) {
     const s = String(level),
       tw = ctx.measureText(s).width;
+    const left = px - tw / 2 - 4, right = px + tw / 2 + 4;
+    const top = py - 11, bottom = py + 5;
+    const collides = markers.some(([x0, y0, x1, y1, dotX, dotY]) =>
+      (left < x1 + 2 && right > x0 - 2 && top < y1 + 3 && bottom > y0 - 2) ||
+      (left < dotX + 8 && right > dotX - 8 && top < dotY + 8 && bottom > dotY - 8));
+    if (collides) continue;
     ctx.fillStyle = 'rgba(27,49,65,.74)';
     ctx.fillRect(px - tw / 2 - 2, py - 9, tw + 4, 12);
     ctx.fillStyle = '#eff5f1';
@@ -418,6 +471,9 @@ const cities = [
   [139.69, 35.68, '东京'],
   [91.13, 29.65, '拉萨'],
   [87.62, 43.83, '乌鲁木齐'],
+  [75.99, 39.47, '喀什'],
+  [110.35, 20.02, '海口'],
+  [121.56, 25.04, '台北'],
   [120.15, 30.27, '杭州'],
   [114.17, 22.28, '香港'],
 ];
@@ -458,6 +514,7 @@ function markers(f, point, tag, annot, showCities) {
     mark(point[0], point[1], tag, true);
   if (annot) mark(annot[0], annot[1], annot[2], true);
   if (showCities) for (const p of cities) mark(...p, false);
+  return used;
 }
 function drawTrack(f, track, valid) {
   const { ctx, x, y } = f;
@@ -519,16 +576,30 @@ function zonal(f, g) {
   ctx.stroke();
   ['90°N', '45°N', '赤道', '45°S', '90°S'].forEach((s, i) => ctx.fillText(s, xx(i * 18) - 12, h - 11));
 }
+export async function prepareMapData(data) {
+  if (data?.values) texture(data);
+  const [geography, image, detail] = await Promise.all([
+    loadLand(),
+    data?.image ? imageFor(data.image) : null,
+    data?.detailImage ? imageFor(data.detailImage).catch(() => null) : null,
+  ]);
+  return { geography, image, detail };
+}
 export async function drawMap(canvas, data, options = {}) {
   const token = Symbol();
   canvas.paintToken = token;
-  const rings = await loadLand();
-  const img = data?.image ? await imageFor(data.image) : null;
+  const { geography, image, detail } = await prepareMapData(data);
   if (canvas.paintToken !== token || !canvas.isConnected) return;
-  const bbox = extentFor(canvas, options.bbox || data?.bbox || [75, 16, 136, 55]),
-    f = frame(canvas, bbox);
+  const f = frame(canvas, options.bbox || data?.bbox || nationalView, !options.zonal && !data?.externalImage);
   if (!f) return;
-  const { ctx, w, h, x, y } = f;
+  try {
+    paint(canvas, f, data, options, geography, image, detail);
+  } finally {
+    f.ctx.restore();
+  }
+}
+function paint(canvas, f, data, options, geography, img, detail) {
+  const { ctx, w, h, x, y, bbox } = f;
   ctx.fillStyle = '#203c54';
   ctx.fillRect(0, 0, w, h);
   if (options.zonal && data?.values) {
@@ -562,21 +633,43 @@ export async function drawMap(canvas, data, options = {}) {
     }
     const b = data.bbox;
     ctx.drawImage(img, x(b[0]), y(b[3]), x(b[2]) - x(b[0]), y(b[1]) - y(b[3]));
+    if (detail && data.detailBounds && bbox[2] - bbox[0] < 45) {
+      const a = data.detailBounds;
+      ctx.drawImage(detail, x(a[0]), y(a[3]), x(a[2]) - x(a[0]), y(a[1]) - y(a[3]));
+    }
     ctx.fillStyle = 'rgba(15,39,54,.15)';
     ctx.fillRect(0, 0, w, h);
   }
-  coastline(f, rings, bbox, data?.values || img ? 'rgba(18,48,70,.10)' : '#304d62');
+  const paths = pathsFor(canvas, f, geography);
+  ctx.fillStyle = data?.values || img ? 'rgba(18,48,70,.07)' : '#496473';
+  ctx.fill(paths.land, 'evenodd');
+  ctx.strokeStyle = 'rgba(217,234,238,.65)';
+  ctx.lineWidth = 0.8;
+  ctx.stroke(paths.coast);
   graticule(f, bbox);
+  let contourLabels = [];
   if (data?.v) windLines(f, data);
-  else if (data?.values) contours(f, data, bbox);
+  else if (data?.values) contourLabels = contours(f, data, bbox);
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.lineWidth = 2.6;
+  ctx.strokeStyle = 'rgba(20,39,46,.86)';
+  ctx.stroke(paths.china);
+  ctx.lineWidth = 1.15;
+  ctx.strokeStyle = '#fff5d8';
+  ctx.stroke(paths.china);
   if (data?.storms) drawTrack(f, data, data.valid || new Date().toISOString());
-  markers(f, options.point, options.tag, options.annotation, options.cities !== false);
+  const occupied = markers(f, options.point, options.tag, options.annotation, options.cities !== false);
+  labelContours(ctx, contourLabels, occupied);
 }
 export function geoFromPointer(canvas, event, bbox) {
-  const r = canvas.getBoundingClientRect(),
-    b = extentFor(canvas, bbox);
+  const r = canvas.getBoundingClientRect();
+  const view = projection(Math.max(1, r.width), Math.max(1, r.height), bbox);
+  const b = view.bbox;
+  const u = Math.max(0, Math.min(1, (event.clientX - r.left - view.left) / view.width));
+  const v = Math.max(0, Math.min(1, (event.clientY - r.top - view.top) / view.height));
   return [
-    b[0] + ((event.clientX - r.left) / r.width) * (b[2] - b[0]),
-    b[3] - ((event.clientY - r.top) / r.height) * (b[3] - b[1]),
+    b[0] + u * (b[2] - b[0]),
+    b[3] - v * (b[3] - b[1]),
   ];
 }

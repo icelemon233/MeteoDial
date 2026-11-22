@@ -5,7 +5,8 @@ export const automaticLayers = {
 };
 export const pressureLevels = [925, 850, 700, 600, 500, 400, 300];
 export const heightLevels = [500, 400, 300];
-export const liveDomain = { bbox: [55, 5, 165, 75], step: 1, nx: 111, ny: 71 };
+// Extending south appends rows and preserves every existing reference cell index.
+export const liveDomain = { bbox: [55, 0, 165, 75], step: 1, nx: 111, ny: 76 };
 
 export function gridIndex(g, lon, lat) {
   if (

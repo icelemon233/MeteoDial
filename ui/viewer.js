@@ -6,7 +6,6 @@ import {
   escape,
   validText,
   clockTime,
-  md,
   dateText,
   HOUR,
   fmtNum,
@@ -16,10 +15,11 @@ import {
   safeLink,
   failBox,
 } from './base.js';
-import { drawMap, geoFromPointer, sample, legend, extentFor } from './cartography.js';
+import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData } from './cartography.js';
 import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel } from './levels.js';
+import archiveBounds from '../assets/data/archive-domain.json' with { type: 'json' };
 const memo = new Map();
-function resource(url, signal) {
+function resource(url) {
   // Requests shared by panels outlive a panel switch. Only the current revision paints.
   const hit = memo.get(url);
   if (hit && hit.expires > Date.now()) return hit.promise;
@@ -95,11 +95,12 @@ function principle(kind) {
     : '<path d="M0 42Q130 56 294 122H0Z" fill="#7ba5d0"/><path d="M294 115Q204 77 109 55" fill="none" stroke="#ba7855" stroke-width="5" marker-end="url(#section-arrow)"/><text x="42" y="104">冷空气</text><text x="244" y="74">暖湿空气</text>';
   return `<details class="cross-section"><summary>${icon('cross', 16)} 从侧面看${mountain ? '地形抬升' : '冷暖交锋'} · 原理示意</summary><svg viewBox="0 0 380 145" role="img" aria-label="${mountain ? '湿空气沿迎风坡抬升' : '暖湿空气沿倾斜锋面抬升'}"><defs><marker id="section-arrow" markerWidth="4" markerHeight="4" refX="3" refY="2" orient="auto"><path d="M0 0L4 2 0 4Z" fill="${mountain ? '#268e9a' : '#ba7855'}"/></marker></defs><rect width="380" height="145" fill="#e9f2f5"/><path d="M0 123h380v22H0" fill="#a5ac91"/>${shape}</svg></details>`;
 }
-function panelHtml(side, available) {
+function panelHtml(index, available) {
   const options = (keys) => keys.map((k) => `<option value="${k}">${layerNames[k]}</option>`).join('');
   const choices = available ? options(available) : Object.entries(liveGroups)
     .map(([name, keys]) => `<optgroup label="${name}">${options(keys)}</optgroup>`).join('');
-  return `<section class="map-panel" data-side="${side}"><div class="map-panel-head"><label><span class="sr">${side === 'left' ? '左图' : '右图'}图层</span><select class="layer-select">${choices}</select></label><span class="kind"></span></div><div class="map-body"><canvas tabindex="0" aria-label="天气图，点击读取格点，方向键移动取样点"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
+  const name = '第' + (index + 1) + '图';
+  return `<section class="map-panel" aria-label="${name}"><div class="map-panel-head"><label><span class="sr">${name}图层</span><select class="layer-select">${choices}</select></label><span class="kind"></span></div><div class="map-body" tabindex="0" role="group" aria-label="${name}天气图，点选或方向键读取位置，Shift 加方向键平移"><canvas class="current" aria-hidden="true"></canvas><canvas aria-hidden="true"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
 }
 const guides = {
   wind850: '850 hPa 风场显示低层气流。沿箭头向上游回看，可以追踪空气来自哪里。',
@@ -118,53 +119,72 @@ function guideFor(layer) {
   if (guides[layer]) return guides[layer];
   if (layer.startsWith('wind')) return '沿箭头向上游回看，比较进入选点的气流来自哪个方向。';
   if (layer.startsWith('height')) return guides.height500;
-  if (layer.startsWith('temp')) return guides.temp850;
+  if (layer.startsWith('temp')) return '颜色与等温线表示这一气压层的冷暖分布。';
   if (layer.startsWith('moisture')) return guides.moisture700;
   return '';
 }
 export async function showMaps({ main, ctx, place, params }, c) {
   const available = c?.layers;
-  let layers = c ? [...c.defaults] : ['autoUpper', 'autoTransport'],
-    frames = c ? timesFor(c) : [],
+  const defaults = c?.defaults || ['autoUpper', 'autoTransport'];
+  const choices = [...new Set([...defaults, ...(available || ['temp2', 'pressure'])])];
+  const layers = Array.from({ length: 4 }, (_, i) => choices[i % choices.length]);
+  let frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
   let run,
     revision = 0,
     playing = false,
+    autoStart = !params.has('time') && !matchMedia('(prefers-reduced-motion: reduce)').matches,
+    timePinned = params.has('time'),
     playSession = 0,
     showGuide = c?.id !== 'bohai22',
     point = c?.point || [place[5], place[4]],
     cursor = null;
   let forecastFrames = [],
     modeRevision = 0,
+    observing = false,
     localArchive = null,
     scrubTimer;
-  const originalBox =
-    c?.bbox ||
-    (params.has('time')
-      ? [place[5] - 14, place[4] - 9, place[5] + 14, place[4] + 9]
-      : [72, 15, 141, 58]);
-  let bbox = originalBox.slice(),
-    items = {},
-    forecast = null;
-  const sub = c ? caseDate(c) : '';
-  main.innerHTML = `<div class="page-head"><div><div class="subtitle">${escape(sub)}</div></div><button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
-    <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '东亚')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs"><button data-mode="forecast" class="on">预报时次</button><button data-mode="observation">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原地图范围">${icon('focus', 15)}</button></div></div>
-    <div class="map-pair">${panelHtml('left', available)}${panelHtml('right', available)}</div>
-    <div class="timeline panel"><button id="play" aria-label="播放时间轴">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="两图共同的有效时刻" min="0" max="0" value="0"><div id="time-ticks"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button></div>
+  const originalBox = c?.climate ? [-180, -90, 180, 90] : nationalView;
+  let bbox = [...originalBox], items = {}, forecast = null;
+  let viewRevision = 0, redrawFrame = 0;
+  const panels = [];
+  const visibleLayers = () => layers.slice(0, panels.length);
+  function observationSource() {
+    const visible = visibleLayers();
+    return visible.includes('radar') ? 'radar' : visible.includes('satellite') ? 'satellite' : null;
+  }
+  const layouts = [[1, '单图'], [2, '双图'], [4, '四图']];
+  main.innerHTML = `<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
+    <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原${c?.climate ? '全球' : '全国'}地图范围">${icon('focus', 15)}</button></div></div>
+    <div class="map-grid" data-count="1"></div>
+    <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><div id="time-ticks"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button></div>
     <div id="reading"></div>`;
-  const panels = $$('.map-panel', main);
-  panels.forEach((p, i) => {
-    $('.layer-select', p).disabled = true;
-    $('.layer-select', p).value = layers[i];
-    $('.layer-select', p).onchange = (e) => {
-      layers[i] = e.target.value;
-      stop();
-      if (!c && ['radar', 'satellite'].includes(layers[i])) {
-        if (layers[i] === 'radar') bbox = [113, 18, 131, 31];
-        setMode(true);
-      } else void refresh();
-    };
-  });
+  const grid = $('.map-grid', main);
+  const timeline = $('.timeline', main);
+  const cancelAutoStart = () => { autoStart = false; };
+  timeline.addEventListener('pointerdown', cancelAutoStart, { once: true });
+  timeline.addEventListener('keydown', cancelAutoStart, { once: true });
+  function setPanels(count) {
+    while (panels.length > count) {
+      panels.pop().remove();
+      delete items[panels.length];
+    }
+    while (panels.length < count) {
+      const i = panels.length;
+      grid.insertAdjacentHTML('beforeend', panelHtml(i, available));
+      const panel = grid.lastElementChild;
+      panels.push(panel);
+      $('.layer-select', panel).value = layers[i];
+    }
+    grid.dataset.count = count;
+    for (const btn of $$('.map-layout button', main)) {
+      const selected = Number(btn.dataset.count) === count;
+      btn.classList.toggle('on', selected);
+      btn.setAttribute('aria-pressed', String(selected));
+    }
+  }
+  setPanels(1);
+  $('.layer-select', grid).disabled = true;
   if (!c) {
     try {
       run = (await get('/api/run', ctx.signal)).run;
@@ -187,7 +207,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
         .catch(() => {});
     } catch (err) {
       if (ctx.active) {
-        $('.map-pair').innerHTML =
+        grid.innerHTML =
           failBox(err.message) + '<a href="#/cases" class="btn">打开离线案例</a>';
         $('.retry').onclick = () => location.reload();
         $('.timeline').hidden = true;
@@ -200,6 +220,22 @@ export async function showMaps({ main, ctx, place, params }, c) {
   panels.forEach((p) => {
     $('.layer-select', p).disabled = false;
   });
+  $('.map-layout', main).onclick = (e) => {
+    const btn = e.target.closest('[data-count]');
+    if (!btn || panels.length === Number(btn.dataset.count)) return;
+    const before = observationSource();
+    setPanels(Number(btn.dataset.count));
+    if (observing && before !== observationSource()) void setMode(true);
+    else void refreshView();
+  };
+  grid.onchange = (e) => {
+    if (!e.target.matches('.layer-select')) return;
+    const i = panels.indexOf(e.target.closest('.map-panel'));
+    const before = observationSource();
+    layers[i] = e.target.value;
+    if (!c && ((!observing && observationSource()) || (observing && before !== observationSource()))) void setMode(true);
+    else void refreshView();
+  };
   function frameLabel(t) {
     return c?.climate ? seasons[t / 3] : validText(t);
   }
@@ -218,48 +254,46 @@ export async function showMaps({ main, ctx, place, params }, c) {
       .map((i) => '<span>' + frameLabel(frames[i]) + '</span>')
       .join('');
   }
-  function setMode(observe) {
-    stop();
+  async function setMode(observe) {
     const modeVersion = ++modeRevision;
-    if (observe) {
+    const requested = frames[index], source = observe ? observationSource() : null;
+    if (observe && !observing) {
       const last = Math.floor((Date.now() - 30 * 60000) / (10 * 60000)) * 10 * 60000;
       frames = Array.from({ length: 19 }, (_, i) => last - (18 - i) * 10 * 60000);
-      index = frames.length - 1;
-    } else {
+      if (timePinned && !frames.includes(requested)) frames = [...frames, requested].sort((a, b) => a - b);
+      index = timePinned ? frames.indexOf(requested) : frames.length - 1;
+    } else if (!observe && observing) {
       frames = forecastFrames;
       index = frames.reduce(
-        (a, t, i) => (Math.abs(t - Date.now()) < Math.abs(frames[a] - Date.now()) ? i : a),
+        (a, t, i) => (Math.abs(t - requested) < Math.abs(frames[a] - requested) ? i : a),
         0
       );
     }
-    $$('.mode-tabs button').forEach((el) =>
-      el.classList.toggle('on', (el.dataset.mode === 'observation') === observe)
-    );
-    updateTicks();
-    void refresh();
-    if (observe && layers.includes('radar')) {
-      void get('/api/radar-times', ctx.signal)
-        .then((info) => {
-          if (
-            !ctx.active ||
-            modeVersion !== modeRevision ||
-            !layers.includes('radar') ||
-            index !== frames.length - 1
-          )
-            return;
-          const available = info.frames
-            .map((f) => Date.parse(f.time))
-            .filter(Number.isFinite)
-            .slice(-19);
-          if (available.length && available.at(-1) !== frames.at(-1)) {
-            frames = available;
-            index = frames.length - 1;
-            updateTicks();
-            void refresh();
-          }
-        })
-        .catch(() => {});
+    observing = observe;
+    for (const el of $$('.mode-tabs button')) {
+      const selected = (el.dataset.mode === 'observation') === observe;
+      el.classList.toggle('on', selected);
+      el.setAttribute('aria-pressed', String(selected));
     }
+    updateTicks();
+    if (source) {
+      playSession++;
+      revision++;
+      clearTimeout(scrubTimer);
+      if (timePinned) void refresh();
+      else showPending(visibleLayers(), '读取可用时次…');
+      const info = await get('/api/' + source + '-times', ctx.signal).catch(() => null);
+      if (!ctx.active || modeVersion !== modeRevision || source !== observationSource()) return;
+      const available = [...new Set((info?.frames || []).map(f => Date.parse(f.time)).filter(Number.isFinite))]
+        .sort((a, b) => a - b).slice(-19);
+      if (available.length) {
+        frames = timePinned && !available.includes(requested)
+          ? [...available, requested].sort((a, b) => a - b) : available;
+        index = timePinned ? frames.indexOf(requested) : frames.length - 1;
+        updateTicks();
+      }
+    }
+    void refreshView();
   }
   updateTicks();
   if (!c)
@@ -287,7 +321,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
         compare = `<p class="compare"><b>${escape(place[1])} · ${clockTime(row.time)}</b>　主预报 ${fmtNum(row.temp, 1)}℃，${escape(g.source)} 最近格点 ${fmtNum(s.value, 1)}℃。两份预报相差 ${fmtNum(delta, 1)}℃。</p>`;
       }
     }
-    const reading = layers.map((choice, i) => {
+    const reading = visibleLayers().map((choice, i) => {
       const g = items[i],
         l = g?.layer || choice,
         v = sample(g, ...(cursor || point));
@@ -310,8 +344,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
       }
       return guideFor(l);
     }).filter(Boolean);
-    el.innerHTML = `<section class="reading panel"><div class="reading-main"><h2>${icon('book', 18)}${c ? '怎样读这次过程' : '怎样读这两张图'}</h2>${(c ? c.guides : [...new Set(reading)]).map((s, i) => `<p class="step"><b>${i + 1}</b>${escape(s)}</p>`).join('')}${compare}</div>${c ? `<div class="case-evidence"><h3>${c.climate ? '资料时段' : c.dataMode === 'reanalysis' ? '再分析回看' : '当时的预报'}</h3><p>${escape(c.forecast)}</p><h3>${c.climate ? '怎么比较' : '实况回看'}</h3><p>${escape(c.outcome)}</p>${safeLink(c.link, '查看机构原始资料')} ${c.outcomeSource ? safeLink(c.outcomeSource, '实况记录') : ''}</div>` : ''}</section>${c?.cross ? principle(c.cross) : ''}${c?.alternate ? `<a class="practice" href="#/cases/${c.alternate}">${icon('layers', 17)}换一次降雪，隐藏标注自己读 ${icon('arrow', 16)}</a>` : ''}`;
+    el.innerHTML = `<section class="reading panel"><div class="reading-main"><h2>${icon('book', 18)}${c ? '怎样读这次过程' : '怎样读天气图'}</h2>${(c ? c.guides : [...new Set(reading)]).map((s, i) => `<p class="step"><b>${i + 1}</b>${escape(s)}</p>`).join('')}${compare}</div>${c ? `<div class="case-evidence"><h3>${c.climate ? '资料时段' : c.dataMode === 'reanalysis' ? '再分析回看' : '当时的预报'}</h3><p>${escape(c.forecast)}</p><h3>${c.climate ? '怎么比较' : '实况回看'}</h3><p>${escape(c.outcome)}</p>${safeLink(c.link, '查看机构原始资料')} ${c.outcomeSource ? safeLink(c.outcomeSource, '实况记录') : ''}</div>` : ''}</section>${c?.cross ? principle(c.cross) : ''}${c?.alternate ? `<a class="practice" href="#/cases/${c.alternate}">${icon('layers', 17)}换一次降雪，隐藏标注自己读 ${icon('arrow', 16)}</a>` : ''}`;
     const auto = Object.values(items).find((g) => g?.autoRole);
+    if (!c && visibleLayers().includes('radar'))
+      $('.reading-main', el).insertAdjacentHTML('beforeend', safeLink('https://www.nmc.cn/publish/radar/index.html', '中央气象台全国雷达拼图'));
     if (!c && auto) {
       const explanation = Number.isFinite(auto.selectionPressure)
         ? (cursor ? '选点' : place[1]) + '附近的模式地面气压为 ' + fmtNum(auto.selectionPressure) + ' hPa（' + (auto.selectionPressureSource || auto.source) + '）。选层以此格点、此时次为准，山峰与峡谷的实际地势可能不同。'
@@ -355,6 +391,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     panels.forEach((p, i) => {
       const g = items[i],
         el = $('.point-read', p);
+      if (g?.externalImage) { el.textContent = '原始观测图像'; return; }
       if (!cursor) {
         el.textContent = g?.pointStatus==='missing' ? '此时次各源未补到选点，周边格点可点读' :
           g?.pointStatus==='terrain' ? '选点的气压面位于模式地面或地下' : g?.values ? '点击地图读取格点值' : '';
@@ -362,42 +399,44 @@ export async function showMaps({ main, ctx, place, params }, c) {
       }
       const v = valueFor(g, layers[i] === 'zonal' ? 'zonal' : g?.layer || layers[i], ...cursor);
       el.textContent = v
-        ? `${fmtNum(cursor[0], 1)}°E　${fmtNum(cursor[1], 1)}°N　·　${v}`
+        ? `${fmtNum(Math.abs(cursor[0]), 1)}°${cursor[0] < 0 ? 'W' : 'E'}　${fmtNum(Math.abs(cursor[1]), 1)}°${cursor[1] < 0 ? 'S' : 'N'}　·　${v}`
         : g?.values
           ? '此处超出数据覆盖'
           : '';
     });
   }
-  function repaint() {
-    if (!ctx.active) return;
-    panels.forEach((p, i) => {
-      const g = items[i];
-      if (!g) return;
-      void drawMap($('canvas', p), g, {
-        bbox,
-        point: c?.point || cursor || point,
-        tag: showGuide ? c?.tag || (cursor ? '选点' : place[3]) : '',
-        annotation: showGuide ? c?.annotation : null,
-        cities: showGuide,
-        zonal: layers[i] === 'zonal',
-      }).catch((e) => {
-        if (ctx.active) {
-          $('.map-message', p).textContent = e.message;
-          $('.map-message', p).classList.add('show');
-        }
-      });
-    });
-    updateRead();
+  function mapOptions(i) {
+    return {
+      bbox,
+      point: cursor || point,
+      tag: cursor ? '选点' : showGuide ? c?.tag || place[3] : '',
+      annotation: showGuide ? c?.annotation : null,
+      cities: showGuide,
+      zonal: layers[i] === 'zonal',
+    };
   }
-  const observers = panels.map((p) => {
-    const r = new ResizeObserver(repaint);
-    r.observe($('canvas', p));
-    return r;
-  });
+  function repaint() {
+    viewRevision++;
+    if (redrawFrame || !ctx.active) return;
+    redrawFrame = requestAnimationFrame(() => {
+      redrawFrame = 0;
+      if (!ctx.active) return;
+      panels.forEach((panel, i) => {
+        const canvas = $('canvas.current', panel);
+        if (items[i]) void drawMap(canvas, items[i], mapOptions(i)).catch(() => {});
+      });
+      updateRead();
+    });
+  }
+  const observer = new ResizeObserver(repaint);
+  observer.observe(grid, { box: 'device-pixel-content-box' });
+  window.addEventListener('resize', repaint, { signal: ctx.signal });
   ctx.onClose(() => {
     clearTimeout(scrubTimer);
+    cancelAnimationFrame(redrawFrame);
+    observer.disconnect();
+    revision++;
     stop();
-    observers.forEach((r) => r.disconnect());
   });
   async function dataFor(layer, t) {
     if (c?.climate) return resource('/assets/cases/belts/climate-' + t + '.json');
@@ -405,8 +444,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (c) {
       if (layer === 'satellite')
         return {
-          image: '/assets/cases/' + c.id + '/' + iso.slice(0, 10) + '.jpg',
-          bbox: c.bbox,
+          image: '/assets/cases/' + c.id + '/national-' + iso.slice(0, 10) + '.jpg',
+          bbox: archiveBounds,
+          detailImage: '/assets/cases/' + c.id + '/' + iso.slice(0, 10) + '.jpg',
+          detailBounds: c.bbox,
           valid: iso.slice(0, 10),
           source: 'NASA GIBS · Terra / MODIS',
           type: '卫星日合成',
@@ -425,7 +466,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
             : point[0] >= 105
               ? 'se2'
               : 'se1';
-      return resource('/api/satellite?time=' + encodeURIComponent(iso) + '&region=' + reg);
+      return resource('/api/satellite?' + new URLSearchParams({ region: 'china', fallback: reg, time: iso }));
     }
     if (layer === 'radar') return resource('/api/radar?time=' + encodeURIComponent(iso));
     if (layer === 'track') {
@@ -436,131 +477,193 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const lead = Math.floor((t - batch) / (3 * HOUR)) * 3;
     return resource(liveGridUrl(new Date(batch).toISOString(), lead, layer, cursor || point));
   }
-  async function refresh() {
+  async function loadFrame(layer, time) {
+    const data = await dataFor(layer, time);
+    await prepareMapData(data);
+    return data;
+  }
+  function controls(target) {
+    slider.value = String(target);
+    slider.setAttribute('aria-valuetext', frameLabel(frames[target]));
+    $('#prev-frame').disabled = target === 0;
+    $('#next-frame').disabled = target === frames.length - 1;
+  }
+  function describe(panel, layer, data) {
+    const area = $('.map-body', panel);
+    panel.classList.toggle('original-image', Boolean(data.externalImage));
+    area.setAttribute('aria-label', panel.getAttribute('aria-label') + (data.externalImage
+      ? '原始观测图像'
+      : layer === 'zonal' ? '纬向平均气压，点选纬度' : '天气图，点选或方向键读取位置，Shift 加方向键平移'));
+    $('.kind', panel).textContent = data.type || '预报';
+    const valid = data.period || (data.type === '卫星日合成' ? data.valid + ' UTC' : validText(data.valid));
+    const src = $('.map-source', panel);
+    const level = data.autoRole ? actualLevel(data, layerNames) + ' · ' : '';
+    src.textContent = level + sourceName(data) + ' · ' + valid + (data.type === '卫星日合成' ? ' · 黑区为缺测' : '');
+    src.title = data.run ? [
+      data.channel, '起报 ' + validText(data.run), '有效 ' + valid,
+      data.resolution && '原始网格 ' + data.resolution,
+      data.preferredLayer && data.layer !== data.preferredLayer && '首选层在此点缺少可用值',
+      data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
+    ].filter(Boolean).join(' · ') : data.source;
+    const scale = $('.color-scale', panel);
+    scale.replaceChildren();
+    if (data.values && layer !== 'zonal') {
+      const l = legend(data.layer);
+      scale.innerHTML = `<span>${l.low}</span><i style="background:${l.gradient}"></i><span>${l.high} ${l.unit}</span>`;
+      if (data.terrainMask?.includes(1)) scale.insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
+    }
+  }
+  function clearPanel(panel, i) {
+    delete items[i];
+    delete panel.dataset.layer;
+    panel.classList.add('no-frame');
+    $('.map-source', panel).removeAttribute('title');
+    for (const field of $$('.kind, .map-source, .color-scale, .point-read', panel)) field.replaceChildren();
+  }
+  function showPending(choices, text) {
+    for (const [i, panel] of panels.entries()) {
+      if (panel.dataset.layer !== choices[i]) {
+        clearPanel(panel, i);
+        const message = $('.map-message', panel);
+        message.className = 'map-message show';
+        message.textContent = text;
+      }
+    }
+  }
+  async function refresh(target = index, animate = false, prepared) {
     if (!ctx.active) return;
     clearTimeout(scrubTimer);
-    const rev = ++revision,
-      t = frames[index];
-    $('#frame-time').textContent = frameLabel(t) + (c?.climate ? '' : ' · 北京时间');
-    slider.value = String(index);
-    slider.setAttribute('aria-valuetext', frameLabel(t));
-    $('#prev-frame').disabled = index === 0;
-    $('#next-frame').disabled = index === frames.length - 1;
-    await Promise.all(
-      panels.map(async (p, i) => {
-        const layer = layers[i],
-          msg = $('.map-message', p),
-          cv = $('canvas', p);
-        delete items[i];
-        cv.paintToken = null;
-        cv.style.visibility = 'hidden';
+    const rev = ++revision, time = frames[target], choices = visibleLayers();
+    const current = () => ctx.active && rev === revision;
+    showPending(choices, '读取图层…');
+    const results = await (prepared || Promise.allSettled(choices.map(layer => loadFrame(layer, time))));
+    if (!current()) return;
+    // Staging canvases share the visible plot's dimensions. Publish all maps and labels together.
+    const buffers = panels.map(panel => $('canvas:not(.current)', panel));
+    let version;
+    do {
+      version = viewRevision;
+      await Promise.all(results.map(async (result, i) => {
+        if (result.status !== 'fulfilled') return;
+        try { await drawMap(buffers[i], result.value, mapOptions(i)); }
+        catch (reason) { results[i] = { status: 'rejected', reason }; }
+      }));
+      if (!current()) return;
+    } while (version !== viewRevision);
+    for (const [i, panel] of panels.entries()) {
+      const msg = $('.map-message', panel), result = results[i];
+      if (result.status === 'rejected') {
+        clearPanel(panel, i);
+        msg.innerHTML = `<span>${escape(result.reason?.message || '此时次暂无资料')}</span><button class="btn map-retry">重试</button>`;
         msg.className = 'map-message show';
-        msg.textContent = '读取图层…';
-        $('.map-source', p).textContent = '';
-        $('.kind', p).textContent = '';
-        $('.point-read', p).textContent = '';
-        $('.color-scale', p).innerHTML = '';
-        try {
-          const g = await dataFor(layer, t);
-          if (rev !== revision || !ctx.active) return;
-          items[i] = g;
-          if (layer === 'track' && !g.storms?.length) {
-            msg.textContent = '香港天文台监测范围内暂无正在发布的台风路径';
-          } else msg.classList.remove('show');
-          cv.style.visibility = 'visible';
-          $('.kind', p).textContent = g.type || '预报';
-          const valid = g.period
-            ? g.period
-            : g.type === '卫星日合成'
-              ? g.valid + ' UTC'
-              : validText(g.valid);
-          const src = $('.map-source', p);
-          const level = g.autoRole ? actualLevel(g, layerNames) + ' · ' : '';
-          src.textContent = level + sourceName(g) + ' · ' + valid + (g.type === '卫星日合成' ? ' · 黑区为缺测' : '');
-          src.title = g.run ? [
-            g.channel, '起报 ' + validText(g.run), '有效 ' + valid,
-            g.resolution && '原始网格 ' + g.resolution,
-            g.preferredLayer && g.layer !== g.preferredLayer && '首选层在此点缺少可用值',
-            g.terrainReference && '同时参考 ' + g.terrainReference + ' 地形',
-          ].filter(Boolean).join(' · ') : g.source;
-          if (g.values && layer !== 'zonal') {
-            const l = legend(g.layer);
-            $('.color-scale', p).innerHTML =
-              `<span>${l.low}</span><i style="background:${l.gradient}"></i><span>${l.high} ${l.unit}</span>`;
-            if (g.terrainMask?.includes(1)) $('.color-scale', p).insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
-          }
-          repaint();
-        } catch (e) {
-          if (rev === revision && ctx.active) {
-            msg.innerHTML = `<span>${escape(e.message)}</span><button class="btn map-retry">重试</button>`;
-            $('.map-retry', p).onclick = () => refresh();
-          }
-        }
-      })
-    );
-    if (rev === revision) renderReading();
+        $('.map-retry', msg).onclick = () => { stop(); void refresh(); };
+        continue;
+      }
+      const data = result.value, layer = choices[i];
+      const previous = $('canvas.current', panel);
+      for (const anim of previous.getAnimations()) anim.cancel();
+      previous.classList.remove('current');
+      buffers[i].classList.add('current');
+      if (animate && items[i] && !matchMedia('(prefers-reduced-motion: reduce)').matches)
+        buffers[i].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+      items[i] = data;
+      panel.dataset.layer = layer;
+      panel.classList.remove('no-frame');
+      const empty = layer === 'track' && !data.storms?.length;
+      msg.className = empty ? 'map-message show' : 'map-message';
+      msg.textContent = empty ? '此时次没有已发布的台风路径' : '';
+      describe(panel, layer, data);
+    }
+    index = target;
+    controls(index);
+    const canZoom = panels.some((panel, i) => !items[i]?.externalImage && layers[i] !== 'zonal');
+    for (const btn of $$('.zoom button', main)) btn.disabled = !canZoom;
+    $('#frame-time').textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
+    updateRead();
+    if (!c) renderReading();
+    return results.some(result => result.status === 'fulfilled');
+  }
+  async function refreshView() {
+    const resume = playing || autoStart, seq = ++playSession;
+    const hasData = await refresh();
+    if (!ctx.active || seq !== playSession || hasData === undefined) return;
+    if (!hasData) stop();
+    else if (resume && (playing || autoStart)) void startPlayback(true);
   }
   function stop() {
+    if (playing) revision++;
+    autoStart = false;
     playing = false;
     playSession++;
+    if (!ctx.active) return;
     const btn = $('#play');
-    if (btn) {
-      btn.innerHTML = icon('play', 17);
-      btn.setAttribute('aria-label', '播放时间轴');
-    }
+    btn.innerHTML = icon('play', 17);
+    btn.setAttribute('aria-label', '播放时间轴');
+    btn.setAttribute('aria-pressed', 'false');
   }
-  async function play() {
-    if (playing) {
-      stop();
-      return;
-    }
-    playing = true;
-    const seq = ++playSession;
-    $('#play').innerHTML = icon('pause', 17);
-    $('#play').setAttribute('aria-label', '暂停时间轴');
-    if (index === frames.length - 1) index = -1;
-    while (ctx.active && playing && seq === playSession && index < frames.length - 1) {
-      index++;
-      await refresh();
-      await new Promise((r) => setTimeout(r, 900));
-    }
-    if (ctx.active && seq === playSession) stop();
-  }
-  $('#play').onclick = play;
-  slider.oninput = () => {
-    stop();
-    index = Number(slider.value);
-    if (c) {
-      void refresh();
-      return;
-    }
-    ++revision;
+  async function startPlayback(holdFirst = false) {
     clearTimeout(scrubTimer);
-    $('#frame-time').textContent = frameLabel(frames[index]) + ' · 北京时间';
-    slider.setAttribute('aria-valuetext', frameLabel(frames[index]));
-    for (const p of panels) {
-      $('.map-message', p).className = 'map-message show';
-      $('.map-message', p).textContent = '定位到所选时次…';
+    if (!frames.length) return;
+    playing = true;
+    autoStart = false;
+    const seq = ++playSession, btn = $('#play');
+    btn.innerHTML = icon('pause', 17);
+    btn.setAttribute('aria-label', '暂停时间轴');
+    btn.setAttribute('aria-pressed', 'true');
+    let missing = 0;
+    while (ctx.active && playing && seq === playSession) {
+      const next = (index + 1) % frames.length;
+      let prepared;
+      if (holdFirst) {
+        prepared = Promise.allSettled(visibleLayers().map(layer => loadFrame(layer, frames[next])));
+        await new Promise(resolve => setTimeout(resolve, 750));
+        if (!ctx.active || !playing || seq !== playSession) break;
+      }
+      const hasData = await refresh(next, true, prepared);
+      if (!ctx.active || !playing || seq !== playSession) break;
+      missing = hasData === false ? missing + 1 : 0;
+      if (missing >= Math.min(3, frames.length)) { stop(); break; }
+      holdFirst = true;
     }
-    scrubTimer = setTimeout(() => void refresh(), 160);
-  };
-  $('#prev-frame').onclick = () => {
+  }
+  function seek(target, debounce) {
     stop();
-    index = Math.max(0, index - 1);
-    void refresh();
-  };
-  $('#next-frame').onclick = () => {
+    timePinned = true;
+    modeRevision++;
+    index = target;
+    revision++;
+    controls(target);
+    clearTimeout(scrubTimer);
+    if (debounce && !c) scrubTimer = setTimeout(() => void refresh(), 100);
+    else void refresh();
+  }
+  function pauseAtCurrent() {
+    timePinned = true;
+    modeRevision++;
     stop();
-    index = Math.min(frames.length - 1, index + 1);
-    void refresh();
+    if (panels.some(panel => !panel.dataset.layer && !$('.map-retry', panel))) void refresh();
+  }
+  $('#play').onclick = () => {
+    if (playing) { pauseAtCurrent(); return; }
+    timePinned = false;
+    modeRevision++;
+    void startPlayback();
   };
+  slider.onpointerdown = pauseAtCurrent;
+  slider.onkeydown = (e) => {
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageDown', 'PageUp'].includes(e.key)) pauseAtCurrent();
+  };
+  slider.oninput = () => seek(Number(slider.value), true);
+  $('#prev-frame').onclick = () => seek(Math.max(0, index - 1));
+  $('#next-frame').onclick = () => seek(Math.min(frames.length - 1, index + 1));
+
   const zoom = (factor) => {
     const cx = (bbox[0] + bbox[2]) / 2,
       cy = (bbox[1] + bbox[3]) / 2,
       hw = ((bbox[2] - bbox[0]) * factor) / 2,
       hh = ((bbox[3] - bbox[1]) * factor) / 2;
     if (hw < 1 || hw > 180) return;
-    bbox = [cx - hw, cy - hh, cx + hw, cy + hh];
+    bbox = clampView([cx - hw, cy - hh, cx + hw, cy + hh]);
     repaint();
   };
   const zb = $$('.zoom button');
@@ -572,14 +675,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
     readPoint();
   };
   function readPoint() {
-    const reload = !c && layers.some((id, i) => {
+    const reload = !c && visibleLayers().some((id, i) => {
       if (Object.hasOwn(automaticLayers, id)) return true;
       const grid = items[i];
       if (!grid?.values) return false;
       const value = sample(grid, ...(cursor || point));
       return grid.backupSource || grid.pointStatus === 'missing' || (value && value.value === null && !value.belowGround);
     });
-    if (reload) { stop(); void refresh(); }
+    if (reload) void refreshView();
     else { repaint(); renderReading(); }
   }
   $('.guide-switch').onclick = (e) => {
@@ -589,54 +692,74 @@ export async function showMaps({ main, ctx, place, params }, c) {
     repaint();
     renderReading();
   };
-  panels.forEach((p, i) => {
-    const cv = $('canvas', p);
-    let start = null;
-    cv.onpointerdown = (e) => {
-      if (items[i]?.externalImage) return;
-      start = { x: e.clientX, y: e.clientY, b: bbox.slice() };
-      cv.setPointerCapture(e.pointerId);
-    };
-    cv.onpointermove = (e) => {
-      if (!start) return;
-      const r = cv.getBoundingClientRect(),
-        view = extentFor(cv, start.b),
-        dx = ((e.clientX - start.x) / r.width) * (view[2] - view[0]),
-        dy = ((e.clientY - start.y) / r.height) * (view[3] - view[1]);
-      if (Math.abs(dx) + Math.abs(dy) > 0.03) {
-        bbox = [start.b[0] - dx, start.b[1] + dy, start.b[2] - dx, start.b[3] + dy];
-        repaint();
+  let drag = null;
+  function targetMap(target) {
+    const body = target.closest('.map-body');
+    if (!body || target.closest('button, .map-message')) return null;
+    const i = panels.indexOf(body.closest('.map-panel'));
+    if (i < 0 || items[i]?.externalImage) return null;
+    return { body, i };
+  }
+  grid.onpointerdown = (e) => {
+    const target = targetMap(e.target);
+    if (!target || e.button !== 0 || !e.isPrimary) return;
+    drag = { ...target, x: e.clientX, y: e.clientY, box: bbox.slice(), id: e.pointerId, moved: false };
+    target.body.setPointerCapture(e.pointerId);
+  };
+  grid.onpointermove = (e) => {
+    if (!drag || drag.id !== e.pointerId || layers[drag.i] === 'zonal') return;
+    const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+    if (Math.hypot(dx, dy) < 4 && !drag.moved) return;
+    drag.moved = true;
+    const r = drag.body.getBoundingClientRect(), view = extentFor(drag.body, drag.box);
+    bbox = panView(drag.box, -dx * (view[2] - view[0]) / r.width, dy * (view[3] - view[1]) / r.height);
+    repaint();
+  };
+  grid.onpointerup = (e) => {
+    if (!drag || drag.id !== e.pointerId) return;
+    if (!drag.moved) {
+      cursor = geoFromPointer(drag.body, e, bbox);
+      if (layers[drag.i] === 'zonal') {
+        const rect = drag.body.getBoundingClientRect();
+        const fraction = Math.max(0, Math.min(1, (e.clientX - rect.left - 30) / Math.max(1, rect.width - 58)));
+        cursor = [(bbox[0] + bbox[2]) / 2, 90 - 180 * fraction];
       }
-    };
-    cv.onpointerup = (e) => {
-      if (start && Math.hypot(e.clientX - start.x, e.clientY - start.y) < 5) {
-        cursor = geoFromPointer(cv, e, bbox);
-        if (layers[i] === 'zonal' && items[i])
-          cursor[1] =
-            90 -
-            ((e.clientX - cv.getBoundingClientRect().left - 30) / Math.max(1, cv.clientWidth - 58)) *
-              180;
-        readPoint();
-      }
-      start = null;
-    };
-    cv.onpointercancel = () => {
-      start = null;
-    };
-    cv.onkeydown = (e) => {
-      const moves = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
-      if (!moves[e.key]) return;
-      e.preventDefault();
-      cursor = cursor || [(bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2];
-      const step = items[i]?.step || 1;
-      cursor = [cursor[0] + moves[e.key][0] * step, cursor[1] + moves[e.key][1] * step];
       readPoint();
-    };
-  });
+    }
+    drag = null;
+  };
+  grid.onlostpointercapture = grid.onpointercancel = () => { drag = null; };
+  grid.onkeydown = (e) => {
+    const target = targetMap(e.target);
+    const move = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] }[e.key];
+    if (!target || !move) return;
+    e.preventDefault();
+    const view = extentFor(target.body, bbox);
+    if (e.shiftKey) {
+      if (layers[target.i] === 'zonal') return;
+      bbox = panView(bbox, move[0] * (view[2] - view[0]) / 8, move[1] * (view[3] - view[1]) / 8);
+      repaint();
+      return;
+    }
+    cursor ||= [(view[0] + view[2]) / 2, (view[1] + view[3]) / 2];
+    const step = items[target.i]?.step || 1;
+    if (layers[target.i] === 'zonal') {
+      cursor[1] = Math.max(-90, Math.min(90, cursor[1] + (move[1] - move[0]) * step));
+    } else {
+      cursor = [
+        Math.max(view[0], Math.min(view[2], cursor[0] + move[0] * step)),
+        Math.max(view[1], Math.min(view[3], cursor[1] + move[1] * step)),
+      ];
+    }
+    readPoint();
+  };
+
+  renderReading();
+  const initialFrame = refreshView();
   if (c && ['bohai', 'bohai22'].includes(c.id)) {
     localArchive = await resource('/assets/cases/' + c.id + '/local.json');
     if (!ctx.active) return;
+    renderReading();
   }
-  renderReading();
-  await refresh();
+  await initialFrame;
 }

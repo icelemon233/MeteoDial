@@ -11,8 +11,11 @@ const {
 const { fetchField } = require('./grib-field.cjs');
 const { liveDomain } = require('../shared/levels.mjs');
 const HOUR = 3600000;
+const archiveMirror = { ...sources[0], id: 'gfs-google', channel: 'NOAA 开放数据 · Google Cloud' };
 const boxes = {
-  asia: liveDomain.bbox,
+  asia: [55, 5, 165, 75],
+  live: liveDomain.bbox,
+  national: require('../assets/data/archive-domain.json'),
   bohai: [112, 30, 132, 45],
   beijing: [110, 35, 122, 44],
   henan: [106, 29, 123, 41],
@@ -52,10 +55,11 @@ function latestRun() {
   );
 }
 function surfaceValues(source, run, lead, entry, box, step) {
+  const extent = box === 'asia' ? box : boxes[box].join(',');
   const key =
     source.id === 'gfs'
-      ? ['gfs-ps-v3', entry.url, box, step].join(':')
-      : ['model-ps-v1', entry.url, entry.at, box, step].join('|');
+      ? ['gfs-ps-v3', entry.url, extent, step].join(':')
+      : ['model-ps-v1', entry.url, entry.at, extent, step].join('|');
   return cached(key, 10 * 864e5, async () => ({
     value: await fetchField(source, run, lead, entry, boxes[box], step),
   }));
@@ -76,10 +80,11 @@ async function readProviderGrid(
     throw fieldError('该产品未接入同定义的瞬时降水字段');
   const url = gribAddress(source, run, lead, resolution);
   const pressureLevel = /^(\d+) mb$/.exec(specs[0][1]);
+  const extent = box === 'asia' ? box : bbox.join(',');
   const key =
     source.id === 'gfs'
-      ? ['gfs-grid-v7', url, layer, box, step].join(':')
-      : ['model-grid-v1', source.id, url, layer, box, step].join('|');
+      ? ['gfs-grid-v7', url, layer, extent, step].join(':')
+      : ['model-grid-v1', source.id, url, layer, extent, step].join('|');
   const grid = await cached(key, 10 * 864e5, async () => {
     // Resolve all components, including the terrain field, before starting any byte-range reads.
     const entries = await selectEntries(
@@ -137,7 +142,35 @@ async function readProviderGrid(
   return { ...grid, sourceId: source.id, channel: source.channel };
 }
 // Historical GFS exports retain their original model, resolution and cycle.
-function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', step = 1) {
-  return readProviderGrid(sources[0], run, lead, layer, box, resolution, step);
+async function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', step = 1) {
+  try {
+    return await readProviderGrid(archiveMirror, run, lead, layer, box, resolution, step);
+  } catch {
+    return readProviderGrid(sources[0], run, lead, layer, box, resolution, step);
+  }
 }
-module.exports = { fields, boxes, readGrid, readProviderGrid, latestRun, findRun, address };
+
+async function readLiveGrid(source, run, lead, layer) {
+  try {
+    return await readProviderGrid(source, run, lead, layer, 'live');
+  } catch (error) {
+    // Older installations cached an extent ending at 5°N; its reference cells
+    // have the same row order. Only read an existing record for this exact time.
+    const url = gribAddress(source, run, lead, source.resolution);
+    const key = source.id === 'gfs'
+      ? ['gfs-grid-v7', url, layer, 'asia', 1].join(':')
+      : ['model-grid-v1', source.id, url, layer, 'asia', 1].join('|');
+    const old = await cached(key, 0, () => { throw error; });
+    const cycle = new Date(run).getTime();
+    if (old.source !== source.name || old.layer !== layer || Date.parse(old.run) !== cycle ||
+        Date.parse(old.valid) !== cycle + lead * HOUR || old.step !== 1 ||
+        old.nx !== liveDomain.nx || old.ny !== 71 || !Array.isArray(old.bbox) ||
+        !boxes.asia.every((v, i) => v === old.bbox[i]) || old.values?.length !== old.nx * old.ny)
+      throw error;
+    const cells = (liveDomain.ny - old.ny) * old.nx;
+    const extend = (array, fill) => array && array.concat(Array(cells).fill(fill));
+    return { ...old, ...liveDomain, sourceId: source.id, channel: source.channel,
+      values: extend(old.values, null), v: extend(old.v, null), terrainMask: extend(old.terrainMask, 0) };
+  }
+}
+module.exports = { fields, boxes, readGrid, readLiveGrid, readProviderGrid, latestRun, findRun, address };

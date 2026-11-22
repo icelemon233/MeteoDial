@@ -8,7 +8,7 @@ const { fields, latestRun } = require('./grids.cjs');
 const { resolveLiveGrid } = require('./live-grids.cjs');
 const { automaticLayers, liveDomain, levelChoices } = require('../shared/levels.mjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
-const { satellite, cyclones, radar, radarIndex } = require('./sky.cjs');
+const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sky.cjs');
 const ROOT = path.join(__dirname, '..');
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -59,8 +59,10 @@ async function api(url) {
     case '/api/satellite': {
       const t = Date.parse(q.get('time'));
       if (!Number.isFinite(t)) throw Error('无效时刻');
-      return satellite(t, q.get('region') || 'jpn');
+      return satellite(t, q.get('region') || 'jpn', q.get('fallback'));
     }
+    case '/api/satellite-times':
+      return satelliteTimes();
     case '/api/cyclones':
       return cyclones();
     case '/api/radar-times':
@@ -77,6 +79,7 @@ const routes = new Set([
   '/api/run',
   '/api/grid',
   '/api/satellite',
+  '/api/satellite-times',
   '/api/cyclones',
   '/api/radar-times',
   '/api/radar',
@@ -123,7 +126,8 @@ function matchesLiveGrid(grid, query) {
     : grid.layer === choice;
 }
 async function forwarded(remote, url) {
-  const live = url.pathname === '/api/grid' || url.pathname === '/api/run';
+  const live = url.pathname === '/api/grid' || url.pathname === '/api/run' ||
+    url.pathname === '/api/satellite-times' || (url.pathname === '/api/satellite' && url.searchParams.get('region') === 'china');
   try {
     const response = await request(remote + url.pathname + url.search, {
       timeout: 45000,
@@ -154,7 +158,8 @@ async function forwarded(remote, url) {
     }
     return result;
   } catch (error) {
-    if (live && (!error.statusCode || error.statusCode >= 500 || error.statusCode === 404))
+    if (live && (!error.statusCode || error.statusCode >= 500 || error.statusCode === 404 ||
+      (url.pathname === '/api/grid' && error.statusCode === 400)))
       return api(url);
     throw error;
   }

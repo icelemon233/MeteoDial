@@ -1,6 +1,10 @@
 'use strict';
 const { cached, request } = require('./network.cjs');
 const H = 3600000;
+const tenMinutes = 10 * 60000;
+const gibs = 'https://gibs.earthdata.nasa.gov/wms/epsg4326/best/wms.cgi';
+const infrared = 'Himawari_AHI_Band13_Clean_Infrared';
+const archiveBounds = require('../assets/data/archive-domain.json');
 const jmaRoot = 'https://www.data.jma.go.jp/mscweb/data/himawari/img/';
 const regionBounds = {
   jpn: [115, 22, 155, 48],
@@ -8,12 +12,67 @@ const regionBounds = {
   se2: [105, 0, 140, 30],
   se1: [80, 0, 115, 30],
 };
-async function satellite(time, region) {
-  if (!regionBounds[region]) throw Error('未知卫星观测区域');
+function observationTimes(xml, now) {
+  const start = xml.indexOf('<Name>' + infrared + '</Name>');
+  if (start < 0) throw Error('卫星服务没有公布红外通道');
+  const layer = xml.slice(start, xml.indexOf('</Layer>', start));
+  const published = layer.match(/<Dimension\b[^>]*\bname="time"[^>]*>([^<]+)<\/Dimension>/i)?.[1];
+  if (!published) throw Error('卫星服务没有公布观测时次');
+  const times = new Set();
+  const cutoff = now - 24 * H;
+  for (const entry of published.split(',')) {
+    const [from, through, cadence] = entry.trim().split('/');
+    const first = Date.parse(from), last = through ? Date.parse(through) : first;
+    if (!Number.isFinite(first) || !Number.isFinite(last) || last < cutoff || first > now ||
+        (through && cadence !== 'PT10M')) continue;
+    const begin = first + Math.max(0, Math.ceil((cutoff - first) / tenMinutes)) * tenMinutes;
+    for (let t = begin; t <= Math.min(now, last); t += tenMinutes) times.add(t);
+  }
+  return [...times].sort((a,b) => a-b).map(t => ({ time: new Date(t).toISOString() }));
+}
+async function satelliteTimes() {
+  return cached('gibs-himawari13-times-v1', 5 * 60000, async () => {
+    const response = await request(gibs + '?SERVICE=WMS&REQUEST=GetCapabilities&VERSION=1.3.0',
+      { timeout: 20000, preferSystem: true });
+    const frames = observationTimes(await response.text(), Date.now());
+    if (!frames.length) throw Error('近一天暂无已发布的全国红外云图');
+    return { value: { frames } };
+  }, { stale: 75 * 60000 });
+}
+async function nationalSatellite(valid, utc) {
+  return cached('gibs-himawari13-cn-v1:' + utc, 24 * H, async () => {
+    const { frames } = await satelliteTimes();
+    if (!frames.some(frame => Date.parse(frame.time) === valid))
+      throw Error('全国红外云图在所选时次没有观测');
+    const width = 1024;
+    const height = Math.round(width * (archiveBounds[3] - archiveBounds[1]) / (archiveBounds[2] - archiveBounds[0]));
+    const params = new URLSearchParams({ SERVICE: 'WMS', REQUEST: 'GetMap', VERSION: '1.1.1',
+      LAYERS: infrared, STYLES: '', FORMAT: 'image/png', SRS: 'EPSG:4326', BBOX: archiveBounds.join(','),
+      WIDTH: String(width), HEIGHT: String(height), TRANSPARENT: 'TRUE', TIME: utc.replace('.000Z', 'Z') });
+    const response = await request(gibs + '?' + params, { timeout: 20000, preferSystem: true });
+    const bytes = Buffer.from(await response.arrayBuffer());
+    if (bytes.length < 33 || bytes.readUInt32BE(0) !== 0x89504e47 ||
+        bytes.readUInt32BE(16) !== width || bytes.readUInt32BE(20) !== height ||
+        bytes.toString('ascii', bytes.length - 8, bytes.length - 4) !== 'IEND') throw Error('全国红外云图不完整');
+    return { value: { image: 'data:image/png;base64,' + bytes.toString('base64'), bbox: archiveBounds,
+      valid: utc, type: '卫星观测', source: '葵花 9 号 · B13 红外 · NASA GIBS' } };
+  });
+}
+async function satellite(time, region, fallback) {
+  if (region !== 'china' && !Object.hasOwn(regionBounds, region)) throw Error('未知卫星观测区域');
   const valid = Math.floor(time / (10 * 60000)) * (10 * 60000);
+  if (region === 'china' && valid !== time) throw Error('所选时刻没有对应的十分钟红外观测');
   if (valid > Date.now() - 15 * 60000 || Date.now() - valid > 23.5 * H)
     throw Error('该时刻暂无卫星观测，请选择最近一天的过去时刻');
   const utc = new Date(valid).toISOString();
+  if (region === 'china') {
+    try { return await nationalSatellite(valid, utc); }
+    catch (error) {
+      if (!Object.hasOwn(regionBounds, fallback)) throw error;
+      const local = await satellite(time, fallback);
+      return { ...local, source: local.source + '（区域原图）' };
+    }
+  }
   const hhmm = utc.slice(11, 16).replace(':', '');
   return cached('jma-ir2:' + region + ':' + utc, 23 * H, async () => {
     const res = await request(jmaRoot + region + '/' + region + '_b13_' + hhmm + '.jpg');
@@ -130,4 +189,4 @@ async function radar(time) {
     };
   });
 }
-module.exports = { satellite, cyclones, radar, radarIndex, positions };
+module.exports = { satellite, satelliteTimes, observationTimes, cyclones, radar, radarIndex, positions };

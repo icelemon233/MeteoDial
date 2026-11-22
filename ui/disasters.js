@@ -29,7 +29,7 @@ export async function showDisasters({ main, ctx, params }, id) {
     const detailLink = event.page ? source.split('#')[0] + '#page=' + event.page : source;
     $('#breadcrumb h1').textContent = event.title;
     $('#breadcrumb a').href = listing + suffix;
-    main.innerHTML = `<article class="event-article panel"><div class="event-heading"><div class="muted">${event.year} · ${escape(event.kind)}</div><h2>${escape(event.title)}</h2></div><dl class="event-copy"><dt>过程与影响</dt><dd>${escape(event.fact)}</dd><dt>怎样读这次过程</dt><dd>${escape(event.analysis)}</dd></dl><div class="event-links">${event.replay ? `<a class="btn" href="#/cases/${escape(event.replay)}">${icon('layers', 16)}在双图上回放</a>` : ''}${safeLink(detailLink, event.sourceTitle || year.label)}${event.extraSource ? safeLink(event.extraSource, '过程核查资料') : ''}</div></article>`;
+    main.innerHTML = `<article class="event-article panel"><div class="event-heading"><div class="muted">${event.year} · ${escape(event.kind)}</div><h2>${escape(event.title)}</h2></div><dl class="event-copy"><dt>过程与影响</dt><dd>${escape(event.fact)}</dd><dt>怎样读这次过程</dt><dd>${escape(event.analysis)}</dd></dl><div class="event-links">${event.replay ? `<a class="btn" href="#/cases/${escape(event.replay)}">${icon('layers', 16)}回放天气过程</a>` : ''}${safeLink(detailLink, event.sourceTitle || year.label)}${event.extraSource ? safeLink(event.extraSource, '过程核查资料') : ''}</div></article>`;
     return;
   }
   const yearIds = Object.keys(data.years)

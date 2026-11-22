@@ -40,16 +40,36 @@ async function checkDesktop() {
     await window.locator('.case-tile[href="#/cases/bohai"]').click();
     await window.locator('.case-local summary').click();
     assert.equal(await window.locator('.case-local tbody tr').count(), 24);
-    await window.waitForFunction(() =>
-      Array.from(document.querySelectorAll('.map-source')).every((el) => el.textContent.trim())
-    );
+    assert.equal(await window.locator('.map-panel').count(), 1);
+    await window.waitForFunction(() => document.querySelector('#play').getAttribute('aria-pressed') === 'true');
+    const first = await window.locator('#frame-slider').inputValue();
+    await window.waitForFunction(ix => document.querySelector('#frame-slider').value !== ix, first);
+    await window.getByRole('button', { name: '暂停时间轴' }).click();
+    for (const count of [1, 2, 4, 1]) {
+      await window.getByRole('button', { name: {1: '单图', 2: '双图', 4: '四图'}[count], exact: true }).click();
+      await window.waitForFunction(expected => {
+        const panels = [...document.querySelectorAll('.map-panel')];
+        return panels.length === expected && panels.every(panel => {
+          const rect = panel.querySelector('.map-body').getBoundingClientRect();
+          return Math.abs(rect.height - rect.width * 9 / 16) < 1 && panel.querySelector('.map-source').textContent.trim();
+        });
+      }, count);
+    }
     const initialTime = await window.locator('#frame-time').innerText();
     await window.locator('#next-frame').click();
-    assert.notEqual(await window.locator('#frame-time').innerText(), initialTime);
+    await window.waitForFunction(previous => document.querySelector('#frame-time').textContent !== previous, initialTime);
+    const slider = window.locator('#frame-slider');
+    await slider.press('End');
+    await window.locator('#play').click();
+    await window.waitForFunction(() => document.querySelector('#frame-slider').value === '1');
+    await slider.press('Home');
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
+    await new Promise(resolve => setTimeout(resolve, 1400));
+    assert.equal(await slider.inputValue(), '0');
     await window.locator('.guide-switch').click();
     assert.equal(await window.locator('.reading').count(), 0);
     assert.deepEqual(errors, []);
-    console.log('区县预报、地点搜索和双图案例回放检查通过');
+    console.log('区县预报、地点搜索、地图布局及循环回放检查通过');
   } finally {
     if (app) await app.close();
     const resolved = path.resolve(profile);

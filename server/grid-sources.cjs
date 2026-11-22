@@ -101,6 +101,8 @@ function gribAddress(source, run, lead, resolution = source.resolution, part = '
   const root =
     source.id === 'nomads'
       ? 'https://nomads.ncep.noaa.gov/pub/data/nccf/com/gfs/prod'
+      : source.id === 'gfs-google'
+        ? 'https://storage.googleapis.com/global-forecast-system'
       : 'https://noaa-gfs-bdp-pds.s3.amazonaws.com';
   return (
     root + '/gfs.' + date + '/' + hour + '/atmos/gfs.t' + hour + 'z.pgrb2.' + resolution + '.f' + fh

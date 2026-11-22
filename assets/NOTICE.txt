@@ -11,14 +11,16 @@ ECMWF IFS 实时预报 © European Centre for Medium-Range Weather Forecasts (EC
 2008 年冰冻和 2016 年寒潮案例采用 Copernicus Climate Change Service (C3S) 的 ECMWF ERA5 再分析资料，经 WeatherBench 2 在 1.5° 网格保守重采样。观象裁切区域、换算单位并使用同时次地面气压遮挡地下格点。Contains modified Copernicus Climate Change Service information. Neither the European Commission nor ECMWF is responsible for use of the data. https://doi.org/10.24381/cds.bd0915c6  https://doi.org/10.24381/cds.adbb2d47  https://weatherbench2.readthedocs.io/en/latest/data-guide.html
 https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.derived.html
 案例卫星日合成来自 NASA Global Imagery Browse Services，Terra / MODIS Corrected Reflectance (True Color)。影像按案例范围裁剪，观象叠加了海岸、位置与读图标注。https://www.earthdata.nasa.gov/data/tools/gibs
-葵花红外卫星影像来自日本气象厅气象卫星中心。https://www.data.jma.go.jp/mscweb/data/himawari/  https://www.data.jma.go.jp/mscweb/en/general/note.html
+全国红外云图采用 NASA GIBS 按经纬度配准的葵花 9 号 AHI B13 十分钟观测，匹配图层公布的观测时刻。区域后备图来自日本气象厅气象卫星中心。https://worldview.earthdata.nasa.gov/?l=Himawari_AHI_Band13_Clean_Infrared https://www.data.jma.go.jp/mscweb/data/himawari/ https://www.data.jma.go.jp/mscweb/en/general/note.html
 热带气旋路径资料来自香港特别行政区政府开放数据平台 DATA.GOV.HK、香港天文台。版权所有归香港特区政府及相关机构。观象绘制与呈现机构资料。
 https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info  https://data.gov.hk/sc/terms-and-conditions
 杜苏芮历史最佳路径来自日本气象厅 RSMC Tokyo，2305 号事后分析资料。https://www.jma.go.jp/jma/jma-eng/jma-center/rsmc-hp-pub-eg/besttrack.html
 区域雷达观测取自 CWA 雷达整合回波图，覆盖台湾及邻近海域，原图含地理范围与色标。https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html  https://data.gov.tw/dataset/75125
 案例文本根据各页面链接的机构分析和实况记录重新编写。截面图是观象绘制的过程示意。
 重大气象灾害档案根据国家气候中心年度气候资料、中国环境状况公报、应急管理部门全国灾情通报和专项调查编写。每条过程记录保留来源，部分条目可跳到公报相应 PDF 页。https://www.cma.gov.cn/zfxxgk/gknr/qxbg/  https://www.mee.gov.cn/hjzl/sthjzk/zghjzkgb/  https://www.mem.gov.cn/gk/tjsj/
-海岸线来自 Natural Earth 公共领域数据，由 world-atlas 整理为 TopoJSON。https://www.naturalearthdata.com/about/terms-of-use/
+世界陆地和海岸线分别取自 Natural Earth 1:50m Land、Coastline（4.1.0，公共领域）。应用保留原始分段并简化顶点。https://www.naturalearthdata.com/downloads/50m-physical-vectors/ https://www.naturalearthdata.com/about/terms-of-use/
+中国地理轮廓来自 NMC Developers 的 nmc_met_graphics（4fcbfdd，bou1_4l）。应用按原始经纬度保留分段，简化线条以供离线绘制。原始资料及许可见 https://github.com/nmcdev/nmc_met_graphics/tree/4fcbfdd/nmc_met_graphics/resources/maps 和 licences/NMC-station-table-GPL-3.0.txt。
+全国历史 GFS 格点读取同一批次、时效与分辨率的 NOAA 公开 GRIB2，使用 Google Cloud 或 AWS 分发端。https://console.cloud.google.com/storage/browser/global-forecast-system https://registry.opendata.aws/noaa-gfs-bdp-pds/
 市县名称、位置及拼音使用 AreaCity 2025.251231.260403 版三级开源数据，源数据版本 2026-04-03。原始 GCJ-02 代表点经 coordtransform 2.1.2 近似转换为 WGS84 并保留三位小数后，用于匹配气象格网。https://github.com/xiangyuecn/AreaCity-JsSpider-StatsGov
 台湾县市与乡镇市区代表点根据内政部门公开行政区边界和 Taiwan Atlas 转换数据提取。https://data.gov.tw/dataset/7441  https://github.com/dkaoster/taiwan-atlas
 香港分区与澳门堂区代表点采用 GeoNames，按 CC BY 4.0 署名并整理为中文名称。和康县、和安县另以县政府驻地赛图拉镇和红柳镇代表点补充，GeoNames 记录 1279771 和 1281441。

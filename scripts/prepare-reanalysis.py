@@ -14,6 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE = ('https://storage.googleapis.com/weatherbench2/datasets/era5/'
         '1959-2023_01_10-6h-240x121_equiangular_with_poles_conservative.zarr')
 CACHE = Path(os.getenv('GUANXIANG_BUILD_CACHE', ROOT / '.data-cache')) / 'weatherbench2'
+BOUNDS = json.loads((ROOT / 'assets/data/archive-domain.json').read_text('utf8'))
 VARIABLES = {
     'temp2': [('2m_temperature', None)], 'temp850': [('temperature', 850)],
     'temp925': [('temperature', 925)], 'height500': [('geopotential', 500)],
@@ -52,11 +53,11 @@ def main():
             continue
         folder = ROOT / 'assets/cases' / case['id']
         folder.mkdir(parents=True, exist_ok=True)
-        west, south, east, north = case['bbox']
+        west, south, east, north = BOUNDS
         xi = np.where((lon >= west - 0.00001) & (lon <= east + 0.00001))[0]
         yi = np.where((lat >= south - 0.00001) & (lat <= north + 0.00001))[0]
         yi = yi[np.argsort(-lat[yi])]
-        assert np.allclose([lon[xi[0]], lat[yi[-1]], lon[xi[-1]], lat[yi[0]]],case['bbox'])
+        assert np.allclose([lon[xi[0]], lat[yi[-1]], lon[xi[-1]], lat[yi[0]]], BOUNDS)
         for lead in case['leads']:
             stamp = datetime.fromisoformat(case['run']).replace(tzinfo=timezone.utc) + timedelta(hours=lead)
             index = int((stamp - datetime(1959, 1, 1, tzinfo=timezone.utc)).total_seconds() // 21600)
@@ -72,7 +73,7 @@ def main():
             for layer in case['layers']:
                 if layer not in VARIABLES:
                     continue
-                grid = {'layer': layer, 'bbox': case['bbox'], 'step': case['step'], 'nx': len(xi), 'ny': len(yi),
+                grid = {'layer': layer, 'bbox': BOUNDS, 'step': case['step'], 'nx': len(xi), 'ny': len(yi),
                         'valid': stamp.isoformat(timespec='milliseconds').replace('+00:00','Z'),
                         'type': '再分析', 'source': 'ECMWF ERA5 · WeatherBench 2', 'resolution': '1.5°'}
                 for j, (field, level) in enumerate(VARIABLES[layer]):
