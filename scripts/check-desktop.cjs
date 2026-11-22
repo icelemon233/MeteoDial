@@ -4,6 +4,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const os = require('node:os');
 const { _electron } = require('playwright-core');
+const { checkLayoutPlayback } = require('./check-layout-playback.cjs');
 
 async function mainPage(app) {
   const deadline = Date.now() + 30000;
@@ -131,6 +132,7 @@ async function checkDesktop() {
       releaseLayer();
       await window.unroute(slowLayer);
     }
+    await checkLayoutPlayback(window);
     assert.deepEqual(errors, []);
     console.log('区县预报、地点搜索、地图布局及循环回放检查通过');
   } finally {

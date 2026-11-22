@@ -827,6 +827,10 @@ main > * {
   content: ' · 读取中';
   color: var(--muted);
 }
+.map-toolbar #frame-time[data-buffering]::after {
+  content: ' · 正在读取下一时次';
+  color: var(--muted);
+}
 .reading {
   margin-top: 15px;
   display: flex;

@@ -35,6 +35,38 @@ test('切换倍速按本帧剩余时间重新计时，暂停会释放当前等�
   assert.equal(advances, 3);
 });
 
+test('播放切换图数复用进行中的请求，只预读可见图层的下一时次', async () => {
+  const { playbackBuffer } = await import('../ui/playback-buffer.js');
+  const requests = new Map();
+  const fields = playbackBuffer((layer, time, group) => {
+    const id = layer + time;
+    assert.ok(!requests.has(id), '重复读取 ' + id);
+    return new Promise((resolve, reject) => {
+      requests.set(id, {resolve, signal:group.controller.signal});
+      group.controller.signal.addEventListener('abort', () => reject(Error('cancelled')), {once:true});
+    });
+  });
+  const [first] = fields.plan(['wind'], 1, 2);
+  const four = fields.plan(['wind','pressure','temp','height'], 1, 2);
+  assert.equal(four[0], first);
+  requests.get('temp1').resolve(12);
+  await four[2];
+  assert.ok(requests.has('temp2'));
+  assert.ok(!requests.has('wind2'));
+  const single = fields.plan(['wind'], 1, 2);
+  assert.equal(single[0], first);
+  assert.ok(requests.get('temp2').signal.aborted);
+  assert.ok(requests.get('pressure1').signal.aborted);
+  assert.ok(!requests.get('wind1').signal.aborted);
+  requests.get('wind1').resolve(8);
+  assert.deepEqual(await first, {status:'fulfilled',value:8});
+  assert.ok(requests.has('wind2'));
+  const [next] = fields.plan(['wind'], 2, 3);
+  fields.clear();
+  assert.equal((await next).status, 'rejected');
+  assert.ok(!requests.has('wind3'));
+});
+
 test('实时预报前120小时逐小时，后期只选原始三小时时效', () => {
   const hours = forecastTimes(run).map(t => (t - start) / H);
   assert.deepEqual(hours.slice(0, 139), Array.from({length: 139}, (_, i) => i - 18));

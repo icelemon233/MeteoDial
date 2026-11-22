@@ -21,6 +21,7 @@ import { forecastTimes, forecastFrame, frameStops, nearestFrame, playbackRates }
 import { drawTimeRuler } from './time-ruler.js';
 import { bindPreferenceSelect } from './shell.js';
 import { playbackClock } from './playback-clock.js';
+import { playbackBuffer } from './playback-buffer.js';
 const memo = new Map();
 function cachedResource(url) {
   const hit = memo.get(url);
@@ -225,6 +226,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     observing = false,
     localArchive = null;
   const clock = playbackClock();
+  const playbackFields = playbackBuffer(dataFor);
+  let activeStep = null, joining = null;
   let scrubFrame = 0, settleTimer = 0, scrubJob = null, scrubQueued = false, scrubPointer = null;
   let quickVisible = false, nextPreviewAt = 0, frameLoad = null;
   let shownTime = null, loadingTimer = 0;
@@ -247,6 +250,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button><select id="playback-rate" aria-label="播放速度" title="播放速度">${playbackRates.map(rate => '<option value="' + rate + '">' + rate + '×</option>').join('')}</select></div>
     <div id="reading"></div>`;
   const grid = $('.map-grid', main);
+  const frameTime = $('#frame-time', main);
   const timeline = $('.timeline', main);
   const speed = $('#playback-rate', timeline);
   bindPreferenceSelect(speed, 'playbackRate', { parse: Number, onValue(rate) {
@@ -259,7 +263,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
   timeline.addEventListener('keydown', cancelAutoStart, { signal: ctx.signal });
   function setPanels(count) {
     while (panels.length > count) {
-      panels.pop().remove();
+      const panel = panels.pop();
+      for (const fade of $('canvas.current', panel).getAnimations()) fade.cancel();
+      panel.remove();
       delete items[panels.length];
     }
     while (panels.length < count) {
@@ -286,7 +292,12 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const before = observationSource();
     setPanels(Number(btn.dataset.count));
     if (observing && before !== observationSource()) void setMode(hasObservation());
-    else void refreshView();
+    else if (playing && activeStep) {
+      const hold = activeStep.hold;
+      repaint();
+      void startPlayback(hold);
+      fillJoiningPanels();
+    } else void refreshView();
   };
   grid.onchange = (e) => {
     if (!e.target.matches('.layer-select')) return;
@@ -338,7 +349,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (source) {
       playSession++;
       revision++;
-      clock.cancel();
+      resetPlayback();
       discardScrub();
       frameLoad?.abort();
       if (timePinned) void refresh();
@@ -582,6 +593,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     clearTimeout(loadingTimer);
     grid.removeAttribute('aria-busy');
     preview.removeAttribute('data-loading');
+    frameTime.removeAttribute('data-buffering');
   }
   function noteSeek() {
     clearSeekStatus();
@@ -700,6 +712,30 @@ export async function showMaps({ main, ctx, place, params }, c) {
     msg.textContent = empty ? '此时次没有已发布的台风路径' : '';
     describe(panel, layer, data);
   }
+  function fillJoiningPanels() {
+    joining?.abort();
+    const group = {controller:new AbortController(), requests:new Map()};
+    joining = group.controller;
+    const time = shownTime;
+    panels.forEach(async (panel, i) => {
+      const layer = layers[i];
+      if (items[i] || time === null || (!c && !cachedResource(frameUrl(layer, time))?.ready)) return;
+      const current = () => !group.controller.signal.aborted && ctx.active && panels[i] === panel &&
+        shownTime === time && layers[i] === layer && !items[i];
+      try {
+        const data = await dataFor(layer, time, group);
+        await prepareMapData(data, {zonal:layer === 'zonal'});
+        if (!current()) return;
+        // The other canvas belongs to the upcoming synchronized frame.
+        const canvas = $('canvas.current', panel);
+        baseJobs.delete(panel);
+        if (await drawMap(canvas, data, mapOptions(i)) && current()) {
+          publishPanel(i, layer, {status:'fulfilled', value:data}, canvas, false);
+          updateRead();
+        }
+      } catch { /* The next playback frame handles unavailable layers. */ }
+    });
+  }
   function yieldToPaint() {
     // Let the real field reach the screen before the full-resolution overlays
     // or the next animation frame occupy the renderer. Hidden windows can settle too.
@@ -710,7 +746,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   function displayTime(time) {
     if (shownTime !== time)
-      $('#frame-time').textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
+      frameTime.textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
     shownTime = time;
     if (time === frames[index]) clearSeekStatus();
   }
@@ -724,6 +760,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const current = () => ctx.active && rev === revision;
     showPending(choices, '读取图层…');
     const buffers = panels.map(panel => $('canvas:not(.current)', panel));
+    const reads = animate ? playbackFields.plan(choices, time, frames[(target + 1) % frames.length]) : null;
     // Opening or changing layers at one valid time can publish independently.
     // A time change still swaps all the staging canvases together.
     const independent = !animate && !preview && (shownTime === null || shownTime === time) &&
@@ -739,9 +776,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const results = await Promise.all(choices.map(async (layer, i) => {
       let result;
       try {
-        const value = await dataFor(layer, time, group);
-        if (animate && current()) await prepareMapData(value, {zonal:layer === 'zonal'});
-        result = {status:'fulfilled', value};
+        result = reads ? await reads[i] : {status:'fulfilled', value:await dataFor(layer, time, group)};
+        if (animate && current() && result.status === 'fulfilled')
+          await prepareMapData(result.value, {zonal:layer === 'zonal'});
       } catch (reason) { result = {status:'rejected', reason}; }
       if (independent && current()) {
         for (const fade of $('canvas.current', panels[i]).getAnimations()) fade.cancel();
@@ -778,12 +815,11 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (!independent) {
       // The previous canvas is visible beneath a crossfade until it finishes.
       const fades = panels.flatMap(panel => $('canvas.current', panel).getAnimations());
-      if (animate && fades.length) {
-        await Promise.all(fades.map(fade => fade.finished.catch(() => {})));
+      if (animate && hold && fades.length) {
+        await Promise.race([hold, Promise.all(fades.map(fade => fade.finished.catch(() => {})))]);
         if (!current()) return;
-      } else {
-        for (const fade of fades) fade.cancel();
       }
+      for (const fade of fades) fade.cancel();
       let version;
       do {
         version = viewRevision;
@@ -796,6 +832,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
           if (!current()) return;
         }
       } while (version !== viewRevision || (quick && preview.detail));
+      joining?.abort();
       results.forEach((result,i) => publishPanel(i, choices[i], result, buffers[i], animate));
     }
     quickVisible = quick;
@@ -822,11 +859,18 @@ export async function showMaps({ main, ctx, place, params }, c) {
       return;
     }
     const resume = playing || autoStart, seq = ++playSession;
-    clock.cancel();
+    resetPlayback();
     const hasData = await refresh();
     if (!ctx.active || seq !== playSession || hasData === undefined) return;
-    if (!hasData) stop();
-    else if (resume && (playing || autoStart)) void startPlayback(true);
+    if (resume && (playing || (autoStart && hasData))) void startPlayback(clock.wait());
+    else if (!hasData) stop();
+  }
+  function resetPlayback() {
+    activeStep = null;
+    playbackFields.clear();
+    joining?.abort();
+    clock.cancel();
+    clearSeekStatus();
   }
   function stop() {
     if (playing) {
@@ -835,7 +879,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       for (const panel of panels)
         for (const fade of $('canvas.current', panel).getAnimations()) fade.cancel();
     }
-    clock.cancel();
+    resetPlayback();
     autoStart = false;
     playing = false;
     playSession++;
@@ -845,7 +889,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     btn.setAttribute('aria-label', '播放时间轴');
     btn.setAttribute('aria-pressed', 'false');
   }
-  async function startPlayback(holdFirst = false) {
+  async function startPlayback(hold = null) {
     discardScrub();
     clearSeekStatus();
     if (frames.length < 2) { stop(); return; }
@@ -858,11 +902,23 @@ export async function showMaps({ main, ctx, place, params }, c) {
     let missing = 0;
     while (ctx.active && playing && seq === playSession) {
       const next = (index + 1) % frames.length;
-      const hasData = await refresh(next, { animate: true, hold: holdFirst ? clock.wait() : null });
+      const step = {hold};
+      activeStep = step;
+      // Show buffering only after the frame was due. The displayed time and
+      // all published plots continue to describe the last verified frame.
+      void Promise.resolve(hold).then(() => {
+        if (activeStep !== step) return;
+        loadingTimer = setTimeout(() => {
+          if (activeStep !== step || !ctx.active) return;
+          grid.setAttribute('aria-busy', 'true');
+          frameTime.setAttribute('data-buffering', '');
+        }, 250);
+      });
+      const hasData = await refresh(next, { animate: true, hold });
       if (!ctx.active || !playing || seq !== playSession) break;
       missing = hasData === false ? missing + 1 : 0;
       if (missing >= Math.min(3, frames.length)) { stop(); break; }
-      holdFirst = true;
+      hold = clock.wait();
     }
   }
   function cancelScrubJob() {
