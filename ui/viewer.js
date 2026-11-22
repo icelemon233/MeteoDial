@@ -18,23 +18,38 @@ import {
 import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData } from './cartography.js';
 import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel } from './levels.js';
 import archiveBounds from '../assets/data/archive-domain.json' with { type: 'json' };
-import { forecastTimes, forecastFrame, frameStops, nearestFrame } from '../shared/timeline.mjs';
+import { forecastTimes, forecastFrame, frameStops, nearestFrame, playbackRates } from '../shared/timeline.mjs';
 import { drawTimeRuler } from './time-ruler.js';
+import { bindPreferenceSelect } from './shell.js';
+import { playbackClock } from './playback-clock.js';
 const memo = new Map();
-function resource(url) {
-  // Requests shared by panels outlive a panel switch. Only the current revision paints.
+function cachedResource(url) {
   const hit = memo.get(url);
-  if (hit && hit.expires > Date.now()) return hit.promise;
-  const p = get(url).catch((e) => {
-    if (memo.get(url)?.promise === p) memo.delete(url);
-    throw e;
-  });
-  memo.set(url, {
-    promise: p,
-    expires: Date.now() + (url.startsWith('/api/grid?') ? 5 * 60000 : url === '/api/cyclones' ? 15 * 60000 : 24 * HOUR),
-  });
+  return hit && hit.expires > Date.now() ? hit : null;
+}
+function remember(url, entry) {
+  memo.delete(url);
+  memo.set(url, entry);
   if (memo.size > 90) memo.delete(memo.keys().next().value);
-  return p;
+}
+function resource(url, group) {
+  const cached = cachedResource(url) || group?.requests.get(url);
+  if (cached) return cached.promise;
+  const ttl = url.startsWith('/api/grid?') ? 5 * 60000 : url === '/api/cyclones' ? 15 * 60000 : 24 * HOUR;
+  const entry = { ready: false, expires: Date.now() + ttl };
+  entry.promise = get(url, group?.controller.signal).then(value => {
+    entry.ready = true;
+    // Share completed fields. Cancelling a superseded group releases its own
+    // HTTP reads without poisoning a later request for the same forecast.
+    if (group && !group.controller.signal.aborted && !cachedResource(url)) remember(url, entry);
+    return value;
+  }, error => {
+    if (memo.get(url) === entry) memo.delete(url);
+    throw error;
+  });
+  if (group) group.requests.set(url, entry);
+  else remember(url, entry);
+  return entry.promise;
 }
 const liveGroups = {
   '随选点与时次选层': Object.keys(automaticLayers),
@@ -146,8 +161,11 @@ export async function showMaps({ main, ctx, place, params }, c) {
   let forecastFrames = [],
     modeRevision = 0,
     observing = false,
-    localArchive = null,
-    scrubTimer;
+    localArchive = null;
+  const clock = playbackClock();
+  let scrubFrame = 0, settleTimer = 0, scrubJob = null, scrubQueued = false, scrubPointer = null;
+  let quickVisible = false, nextPreviewAt = 0, frameLoad = null;
+  let shownTime = null, loadingTimer = 0;
   const originalBox = c?.climate ? [-180, -90, 180, 90] : nationalView;
   let bbox = [...originalBox], items = {}, forecast = null;
   let viewRevision = 0, redrawFrame = 0;
@@ -161,13 +179,19 @@ export async function showMaps({ main, ctx, place, params }, c) {
   main.innerHTML = `<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
     <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原${c?.climate ? '全球' : '全国'}地图范围">${icon('focus', 15)}</button></div></div>
     <div class="map-grid" data-count="1"></div>
-    <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button></div>
+    <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button><select id="playback-rate" aria-label="播放速度" title="播放速度">${playbackRates.map(rate => '<option value="' + rate + '">' + rate + '×</option>').join('')}</select></div>
     <div id="reading"></div>`;
   const grid = $('.map-grid', main);
   const timeline = $('.timeline', main);
-  const cancelAutoStart = () => { autoStart = false; };
-  timeline.addEventListener('pointerdown', cancelAutoStart, { once: true });
-  timeline.addEventListener('keydown', cancelAutoStart, { once: true });
+  const speed = $('#playback-rate', timeline);
+  bindPreferenceSelect(speed, 'playbackRate', { parse: Number, onValue(rate) {
+    clock.setRate(rate);
+    for (const panel of panels)
+      for (const animation of $('canvas.current', panel).getAnimations()) animation.updatePlaybackRate(rate);
+  } });
+  const cancelAutoStart = (event) => { if (!speed.contains(event.target)) autoStart = false; };
+  timeline.addEventListener('pointerdown', cancelAutoStart, { signal: ctx.signal });
+  timeline.addEventListener('keydown', cancelAutoStart, { signal: ctx.signal });
   function setPanels(count) {
     while (panels.length > count) {
       panels.pop().remove();
@@ -248,6 +272,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null);
   }
   async function setMode(observe) {
+    clearSeekStatus();
     const modeVersion = ++modeRevision;
     const requested = frames[index], source = observe ? observationSource() : null;
     if (observe && !observing) {
@@ -269,7 +294,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (source) {
       playSession++;
       revision++;
-      clearTimeout(scrubTimer);
+      clock.cancel();
+      discardScrub();
+      frameLoad?.abort();
       if (timePinned) void refresh();
       else showPending(visibleLayers(), '读取可用时次…');
       const info = await get('/api/' + source + '-times', ctx.signal).catch(() => null);
@@ -411,6 +438,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     redrawFrame = requestAnimationFrame(() => {
       redrawFrame = 0;
       if (!ctx.active) return;
+      quickVisible = false;
       panels.forEach((panel, i) => {
         const canvas = $('canvas.current', panel);
         if (items[i]) void drawMap(canvas, items[i], mapOptions(i)).catch(() => {});
@@ -424,31 +452,23 @@ export async function showMaps({ main, ctx, place, params }, c) {
   rulerObserver.observe(ruler);
   window.addEventListener('resize', repaint, { signal: ctx.signal });
   ctx.onClose(() => {
-    clearTimeout(scrubTimer);
+    discardScrub();
+    frameLoad?.abort();
+    clearSeekStatus();
     cancelAnimationFrame(redrawFrame);
     observer.disconnect();
     rulerObserver.disconnect();
     revision++;
     stop();
   });
-  async function dataFor(layer, t) {
-    if (c?.climate) return resource('/assets/cases/belts/climate-' + t + '.json');
+  function frameUrl(layer, t) {
+    if (c?.climate) return '/assets/cases/belts/climate-' + t + '.json';
     const iso = new Date(t).toISOString();
     if (c) {
-      if (layer === 'satellite')
-        return {
-          image: '/assets/cases/' + c.id + '/national-' + iso.slice(0, 10) + '.jpg',
-          bbox: archiveBounds,
-          detailImage: '/assets/cases/' + c.id + '/' + iso.slice(0, 10) + '.jpg',
-          detailBounds: c.bbox,
-          valid: iso.slice(0, 10),
-          source: 'NASA GIBS · Terra / MODIS',
-          type: '卫星日合成',
-        };
-      if (layer === 'track')
-        return { ...(await resource('/assets/cases/doksuri/track.json')), valid: iso };
+      if (layer === 'satellite') return null;
+      if (layer === 'track') return '/assets/cases/doksuri/track.json';
       const lead = (t - Date.parse(c.run + 'T00:00:00Z')) / HOUR;
-      return resource('/assets/cases/' + c.id + '/' + layer + '-' + lead + '.json');
+      return '/assets/cases/' + c.id + '/' + layer + '-' + lead + '.json';
     }
     if (layer === 'satellite') {
       const reg =
@@ -459,26 +479,46 @@ export async function showMaps({ main, ctx, place, params }, c) {
             : point[0] >= 105
               ? 'se2'
               : 'se1';
-      return resource('/api/satellite?' + new URLSearchParams({ region: 'china', fallback: reg, time: iso }));
+      return '/api/satellite?' + new URLSearchParams({ region: 'china', fallback: reg, time: iso });
     }
-    if (layer === 'radar') return resource('/api/radar?time=' + encodeURIComponent(iso));
-    if (layer === 'track') {
-      const v = await resource('/api/cyclones');
-      return { ...v, valid: iso, type: '机构路径', source: '香港天文台' };
-    }
+    if (layer === 'radar') return '/api/radar?time=' + encodeURIComponent(iso);
+    if (layer === 'track') return '/api/cyclones';
     const forecast = forecastFrame(run, t);
-    if (!forecast) throw Error('该观测时刻没有对应的模式预报');
-    return resource(liveGridUrl(forecast.run, forecast.lead, layer, cursor || point));
+    return forecast ? liveGridUrl(forecast.run, forecast.lead, layer, cursor || point) : null;
   }
-  async function loadFrame(layer, time) {
-    const data = await dataFor(layer, time);
-    await prepareMapData(data);
+  async function dataFor(layer, time, group) {
+    if (c && layer === 'satellite') {
+      const date = new Date(time).toISOString().slice(0,10), folder = '/assets/cases/' + c.id + '/';
+      return { image: folder + 'national-' + date + '.jpg', bbox: archiveBounds,
+        detailImage: folder + date + '.jpg', detailBounds: c.bbox, valid: date,
+        source: 'NASA GIBS · Terra / MODIS', type: '卫星日合成' };
+    }
+    const url = frameUrl(layer, time);
+    if (!url) throw Error('该观测时刻没有对应的模式预报');
+    const data = await resource(url, group);
+    if (layer === 'track') return c ? { ...data, valid: new Date(time).toISOString() }
+      : { ...data, valid: new Date(time).toISOString(), type: '机构路径', source: '香港天文台' };
     return data;
   }
   function previewAt(target) {
     preview.textContent = frameLabel(frames[target]);
     const percent = stops.at(-1) ? 100 * stops[target] / stops.at(-1) : 0;
     preview.style.setProperty('--time-position', percent + '%');
+    preview.toggleAttribute('data-loading', target === index && grid.getAttribute('aria-busy') === 'true');
+  }
+  function clearSeekStatus() {
+    clearTimeout(loadingTimer);
+    grid.removeAttribute('aria-busy');
+    preview.removeAttribute('data-loading');
+  }
+  function noteSeek() {
+    clearSeekStatus();
+    if (shownTime === frames[index]) return;
+    loadingTimer = setTimeout(() => {
+      if (!ctx.active || !timePinned || shownTime === frames[index]) return;
+      grid.setAttribute('aria-busy', 'true');
+      previewAt(hoverFrame ?? index);
+    }, 150);
   }
   function controls(target) {
     slider.value = String(stops[target]);
@@ -507,11 +547,15 @@ export async function showMaps({ main, ctx, place, params }, c) {
       data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
     ].filter(Boolean).join(' · ') : data.source;
     const scale = $('.color-scale', panel);
+    const terrain = data.terrainMask?.includes(1);
+    const scaleKey = data.values && layer !== 'zonal' ? data.layer + (terrain ? '-terrain' : '') : '';
+    if (scale.dataset.key === scaleKey) return;
+    scale.dataset.key = scaleKey;
     scale.replaceChildren();
-    if (data.values && layer !== 'zonal') {
+    if (scaleKey) {
       const l = legend(data.layer);
       scale.innerHTML = `<span>${l.low}</span><i style="background:${l.gradient}"></i><span>${l.high} ${l.unit}</span>`;
-      if (data.terrainMask?.includes(1)) scale.insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
+      if (terrain) scale.insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
     }
   }
   function clearPanel(panel, i) {
@@ -519,6 +563,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     delete panel.dataset.layer;
     panel.classList.add('no-frame');
     $('.map-source', panel).removeAttribute('title');
+    delete $('.color-scale', panel).dataset.key;
     for (const field of $$('.kind, .map-source, .color-scale, .point-read', panel)) field.replaceChildren();
   }
   function showPending(choices, text) {
@@ -531,26 +576,53 @@ export async function showMaps({ main, ctx, place, params }, c) {
       }
     }
   }
-  async function refresh(target = index, animate = false, prepared) {
+  async function refresh(target = index, { animate = false, hold, preview } = {}) {
     if (!ctx.active) return;
-    clearTimeout(scrubTimer);
+    if (!preview) discardScrub();
     const rev = ++revision, time = frames[target], choices = visibleLayers();
+    frameLoad?.abort();
+    const group = {controller: new AbortController(), requests: new Map()};
+    frameLoad = group.controller;
     const current = () => ctx.active && rev === revision;
     showPending(choices, '读取图层…');
-    const results = await (prepared || Promise.allSettled(choices.map(layer => loadFrame(layer, time))));
+    const results = await Promise.allSettled(choices.map(async layer => {
+      const data = await dataFor(layer, time, group);
+      if (animate && current()) await prepareMapData(data);
+      return data;
+    }));
+    if (frameLoad === group.controller) frameLoad = null;
     if (!current()) return;
+    // A fast intermediate preview may paint with its own timestamp while the
+    // thumb keeps moving. Late network replies and obsolete failures stay off screen.
+    if (preview && target !== index &&
+        (performance.now() - preview.started > 120 || results.some(r => r.status === 'rejected'))) return;
+    // The staging canvas is still visible beneath a crossfade until that fade
+    // finishes. After that, draw the next frame while its playback clock runs.
+    const fades = panels.flatMap(panel => $('canvas.current', panel).getAnimations());
+    if (animate && fades.length) {
+      await Promise.all(fades.map(fade => fade.finished.catch(() => {})));
+      if (!current()) return;
+    } else {
+      for (const fade of fades) fade.cancel();
+    }
     // Staging canvases share the visible plot's dimensions. Publish all maps and labels together.
     const buffers = panels.map(panel => $('canvas:not(.current)', panel));
-    let version;
+    let version, quick;
     do {
       version = viewRevision;
+      quick = Boolean(preview && !preview.detail);
       await Promise.all(results.map(async (result, i) => {
         if (result.status !== 'fulfilled') return;
-        try { await drawMap(buffers[i], result.value, mapOptions(i)); }
+        try { await drawMap(buffers[i], result.value, { ...mapOptions(i), quick }); }
         catch (reason) { results[i] = { status: 'rejected', reason }; }
       }));
       if (!current()) return;
-    } while (version !== viewRevision);
+      if (hold) {
+        await hold;
+        hold = null;
+        if (!current()) return;
+      }
+    } while (version !== viewRevision || (quick && preview.detail));
     for (const [i, panel] of panels.entries()) {
       const msg = $('.map-message', panel), result = results[i];
       if (result.status === 'rejected') {
@@ -565,8 +637,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
       for (const anim of previous.getAnimations()) anim.cancel();
       previous.classList.remove('current');
       buffers[i].classList.add('current');
-      if (animate && items[i] && !matchMedia('(prefers-reduced-motion: reduce)').matches)
-        buffers[i].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+      if (animate && items[i] && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        const fade = buffers[i].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
+        fade.playbackRate = clock.rate;
+      }
       items[i] = data;
       panel.dataset.layer = layer;
       panel.classList.remove('no-frame');
@@ -575,10 +649,15 @@ export async function showMaps({ main, ctx, place, params }, c) {
       msg.textContent = empty ? '此时次没有已发布的台风路径' : '';
       describe(panel, layer, data);
     }
-    index = target;
-    controls(index);
+    quickVisible = quick;
+    if (!preview) {
+      index = target;
+      controls(index);
+    }
     const canZoom = panels.some((panel, i) => !items[i]?.externalImage && layers[i] !== 'zonal');
     for (const btn of $$('.zoom button', main)) btn.disabled = !canZoom;
+    shownTime = time;
+    if (time === frames[index]) clearSeekStatus();
     $('#frame-time').textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
     updateRead();
     if (!c) renderReading();
@@ -586,13 +665,20 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   async function refreshView() {
     const resume = playing || autoStart, seq = ++playSession;
+    clock.cancel();
     const hasData = await refresh();
     if (!ctx.active || seq !== playSession || hasData === undefined) return;
     if (!hasData) stop();
     else if (resume && (playing || autoStart)) void startPlayback(true);
   }
   function stop() {
-    if (playing) revision++;
+    if (playing) {
+      revision++;
+      frameLoad?.abort();
+      for (const panel of panels)
+        for (const fade of $('canvas.current', panel).getAnimations()) fade.cancel();
+    }
+    clock.cancel();
     autoStart = false;
     playing = false;
     playSession++;
@@ -603,7 +689,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     btn.setAttribute('aria-pressed', 'false');
   }
   async function startPlayback(holdFirst = false) {
-    clearTimeout(scrubTimer);
+    discardScrub();
+    clearSeekStatus();
     if (frames.length < 2) { stop(); return; }
     playing = true;
     autoStart = false;
@@ -614,33 +701,83 @@ export async function showMaps({ main, ctx, place, params }, c) {
     let missing = 0;
     while (ctx.active && playing && seq === playSession) {
       const next = (index + 1) % frames.length;
-      let prepared;
-      if (holdFirst) {
-        prepared = Promise.allSettled(visibleLayers().map(layer => loadFrame(layer, frames[next])));
-        await new Promise(resolve => setTimeout(resolve, 750));
-        if (!ctx.active || !playing || seq !== playSession) break;
-      }
-      const hasData = await refresh(next, true, prepared);
+      const hasData = await refresh(next, { animate: true, hold: holdFirst ? clock.wait() : null });
       if (!ctx.active || !playing || seq !== playSession) break;
       missing = hasData === false ? missing + 1 : 0;
       if (missing >= Math.min(3, frames.length)) { stop(); break; }
       holdFirst = true;
     }
   }
-  function seek(target, debounce) {
+  function cancelScrubJob() {
+    if (scrubJob) {
+      frameLoad?.abort();
+      scrubJob = null;
+      revision++;
+    }
+  }
+  function discardScrub() {
+    cancelAnimationFrame(scrubFrame);
+    clearTimeout(settleTimer);
+    scrubFrame = settleTimer = 0;
+    scrubQueued = false;
+    cancelScrubJob();
+  }
+  function scheduleScrub() {
+    if (!scrubFrame && ctx.active) scrubFrame = requestAnimationFrame(paintScrub);
+  }
+  function paintScrub(now) {
+    scrubFrame = 0;
+    if (!ctx.active || !scrubQueued) return;
+    if (now < nextPreviewAt) { scheduleScrub(); return; }
+    if (scrubJob && scrubJob.target !== index &&
+        !visibleLayers().every(layer => cachedResource(frameUrl(layer, frames[index]))?.ready)) {
+      // The outstanding read will schedule the latest selection on completion.
+      return;
+    }
+    startScrubJob(false);
+  }
+  function startScrubJob(detail) {
+    scrubQueued = false;
+    if (scrubJob?.target === index) {
+      if (detail) scrubJob.detail = true;
+      return;
+    }
+    cancelScrubJob();
+    const started = performance.now();
+    if (!detail) nextPreviewAt = started + 32;
+    const job = { target: index, started, detail };
+    scrubJob = job;
+    void refresh(index, { preview: job }).finally(() => {
+      if (scrubJob !== job) return;
+      scrubJob = null;
+      if (scrubQueued) scheduleScrub();
+    });
+  }
+  function finishScrub() {
+    clearTimeout(settleTimer);
+    settleTimer = 0;
+    if (!ctx.active) return;
+    if (scrubQueued) startScrubJob(true);
+    else if (scrubJob) scrubJob.detail = true;
+    else if (quickVisible) repaint();
+  }
+  function seek(target, coalesce) {
     if (timePinned && !playing && target === index) {
       controls(index);
       return;
     }
-    stop();
+    if (playing || autoStart || !timePinned) stop();
     timePinned = true;
     modeRevision++;
     index = target;
-    revision++;
     controls(target);
-    clearTimeout(scrubTimer);
-    if (debounce) scrubTimer = setTimeout(() => void refresh(), c ? 45 : 100);
-    else void refresh();
+    noteSeek();
+    if (!coalesce) { void refresh(); return; }
+    if (!scrubJob) revision++;
+    scrubQueued = true;
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(finishScrub, 100);
+    scheduleScrub();
   }
   function pauseAtCurrent() {
     timePinned = true;
@@ -664,7 +801,20 @@ export async function showMaps({ main, ctx, place, params }, c) {
     previewAt(hoverFrame);
   };
   track.onpointerleave = () => { hoverFrame = null; previewAt(index); };
-  slider.onpointerdown = () => { hoverFrame = null; previewAt(index); pauseAtCurrent(); };
+  slider.onpointerdown = (event) => {
+    if (!event.isPrimary || event.button !== 0) return;
+    scrubPointer = event.pointerId;
+    hoverFrame = null;
+    previewAt(index);
+    pauseAtCurrent();
+  };
+  const finishPointer = (event) => {
+    if (event.pointerId !== scrubPointer) return;
+    scrubPointer = null;
+    finishScrub();
+  };
+  window.addEventListener('pointerup', finishPointer, { capture: true, signal: ctx.signal });
+  window.addEventListener('pointercancel', finishPointer, { capture: true, signal: ctx.signal });
   slider.onkeydown = (e) => {
     const page = Math.max(1, Math.round((frames.length - 1) / 10));
     const targets = { ArrowLeft: index - 1, ArrowDown: index - 1, ArrowRight: index + 1, ArrowUp: index + 1,
@@ -675,6 +825,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     seek(Math.max(0, Math.min(frames.length - 1, targets[e.key])), true);
   };
   slider.oninput = () => seek(nearestFrame(stops, Number(slider.value)), true);
+  slider.onchange = slider.onkeyup = finishScrub;
   $('#prev-frame').onclick = () => seek(Math.max(0, index - 1));
   $('#next-frame').onclick = () => seek(Math.min(frames.length - 1, index + 1));
 

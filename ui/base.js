@@ -9,8 +9,10 @@ export const isoDay = (t) => new Date(new Date(t).getTime() + 8 * HOUR).toISOStr
 export function dateText(t, opts = {}) {
   return new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', ...opts }).format(new Date(t));
 }
-export const clockTime = (t) => dateText(t, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
-export const md = (t) => dateText(t, { month: 'numeric', day: 'numeric' });
+const clockFormatter = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const dayFormatter = new Intl.DateTimeFormat('zh-CN', { timeZone: 'Asia/Shanghai', month: 'numeric', day: 'numeric' });
+export const clockTime = (t) => clockFormatter.format(new Date(t));
+export const md = (t) => dayFormatter.format(new Date(t));
 export const validText = (t) => md(t) + ' ' + clockTime(t);
 export const windDir = (d) =>
   Number.isFinite(d)

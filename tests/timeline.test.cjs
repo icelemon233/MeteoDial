@@ -6,6 +6,35 @@ const { resolveLiveGrid } = require('../server/live-grids.cjs');
 const { sources, googleGfs, fieldError } = require('../server/grid-sources.cjs');
 const H = 3600000, run = '2023-12-10T00:00:00.000Z', start = Date.parse(run);
 
+test('切换倍速按本帧剩余时间重新计时，暂停会释放当前等待', async (t) => {
+  const { playbackClock } = await import('../ui/playback-clock.js');
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
+  t.mock.timers.enable({apis:['setTimeout']});
+  const advance = async (ms) => { now += ms; t.mock.timers.tick(ms); await Promise.resolve(); };
+  const clock = playbackClock();
+  let advances = 0;
+  clock.wait().then(() => advances++);
+  await advance(250);
+  clock.setRate(2);
+  await advance(249);
+  assert.equal(advances, 0);
+  await advance(1);
+  assert.equal(advances, 1);
+  clock.setRate(4);
+  clock.wait().then(() => advances++);
+  await advance(50);
+  clock.setRate(0.5);
+  await advance(1099);
+  assert.equal(advances, 1);
+  await advance(1);
+  assert.equal(advances, 2);
+  clock.wait().then(() => advances++);
+  clock.cancel();
+  await advance(3000);
+  assert.equal(advances, 3);
+});
+
 test('实时预报前120小时逐小时，后期只选原始三小时时效', () => {
   const hours = forecastTimes(run).map(t => (t - start) / H);
   assert.deepEqual(hours.slice(0, 139), Array.from({length: 139}, (_, i) => i - 18));

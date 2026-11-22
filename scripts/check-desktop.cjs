@@ -78,6 +78,39 @@ async function checkDesktop() {
     assert.equal(await snowSlider.getAttribute('aria-valuetext'), '12/10 09:00');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
     assert.equal(await window.locator('.time-mark').count(), 28);
+    const speed = window.getByRole('combobox', {name:'播放速度'});
+    await speed.selectOption('2');
+    assert.equal(await snowSlider.getAttribute('aria-valuetext'), '12/10 09:00');
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
+    await window.locator('#play').click();
+    await window.waitForFunction(() => document.querySelector('#frame-slider').value === '3');
+    await speed.selectOption('0.5');
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'true');
+    await snowSlider.press('Home');
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/10 08:00'));
+    await snowSlider.scrollIntoViewIfNeeded();
+    const bounds = await snowSlider.boundingBox();
+    // Sample the displayed map on real input events while the mouse is still down.
+    await window.evaluate(() => {
+      const range = document.querySelector('#frame-slider'), title = document.querySelector('#frame-time');
+      const samples = new Set();
+      const record = () => samples.add(title.textContent);
+      range.addEventListener('input', record);
+      window.addEventListener('pointerup', () => {
+        range.removeEventListener('input', record);
+        range.dataset.scrubSamples = String(samples.size);
+      }, {once:true});
+    });
+    const x = value => bounds.x + 8 + value / 27 * (bounds.width - 16), y = bounds.y + bounds.height / 2;
+    await window.mouse.move(x(0), y);
+    await window.mouse.down();
+    await window.mouse.move(x(27), y, {steps:42});
+    await window.mouse.move(x(16), y, {steps:20});
+    await window.mouse.up();
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/11 00:00'));
+    assert(Number(await snowSlider.getAttribute('data-scrub-samples')) >= 2);
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
     assert.deepEqual(errors, []);
     console.log('区县预报、地点搜索、地图布局及循环回放检查通过');
   } finally {

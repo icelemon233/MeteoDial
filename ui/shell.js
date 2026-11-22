@@ -1,4 +1,5 @@
 import { $, icon, escape } from './base.js';
+import { playbackRates } from '../shared/timeline.mjs';
 const host = window.guanxiang;
 const systemTheme = matchMedia('(prefers-color-scheme: dark)');
 const defaults = {
@@ -7,7 +8,8 @@ const defaults = {
   closeBehavior: 'tray',
   recent: [],
   place: '',
-  version: '0.4.1',
+  playbackRate: 1,
+  version: '0.4.2',
 };
 function saved(key, fallback) {
   try {
@@ -21,6 +23,7 @@ export const prefs = Object.assign(
   defaults,
   host ? await host.read() : saved('guanxiang.settings', {}),
 );
+if (!playbackRates.includes(prefs.playbackRate)) prefs.playbackRate = defaults.playbackRate;
 function saveErrorMessage(error) {
   // Electron IPC preserves the filesystem error in the message but drops its code property.
   const code = error?.code || error?.message?.match(/(?:^|:\s+)(E[A-Z]+):/)?.[1];
@@ -84,6 +87,33 @@ if (host) {
 const pendingSettings = new Map();
 let settingsQueue = Promise.resolve();
 
+export function bindPreferenceSelect(select, key, { parse = String, onValue } = {}) {
+  const reflect = (value) => {
+    if (!select.isConnected) return;
+    select.value = String(value);
+    onValue?.(value);
+  };
+  const pending = pendingSettings.get(key);
+  if (pending) pending.reflect = reflect;
+  reflect(pending?.value ?? prefs[key]);
+  select.onchange = () => {
+    const change = { value: parse(select.value), reflect };
+    pendingSettings.set(key, change);
+    onValue?.(change.value);
+    settingsQueue = settingsQueue.then(async () => {
+      try {
+        await save({ [key]: change.value });
+      } catch {
+        // save reports the error and retains the last persisted preference.
+      }
+      if (pendingSettings.get(key) === change) {
+        pendingSettings.delete(key);
+        if (prefs[key] !== change.value) change.reflect(prefs[key]);
+      }
+    });
+  };
+}
+
 export function showSettings({ main }) {
   main.innerHTML =
     '<div class="settings-page"><section class="settings-card panel"><h2>外观与窗口</h2><label>主题<select id="theme-choice"><option value="system">跟随系统</option><option value="light">浅色</option><option value="dark">深色</option></select></label>' +
@@ -100,24 +130,7 @@ export function showSettings({ main }) {
     ['close-choice', 'closeBehavior'],
   ]) {
     const select = document.getElementById(id);
-    if (!select) continue;
-    select.value = pendingSettings.get(key)?.value ?? prefs[key];
-    select.onchange = () => {
-      const change = { value: select.value };
-      pendingSettings.set(key, change);
-      settingsQueue = settingsQueue.then(async () => {
-        try {
-          await save({ [key]: change.value });
-        } catch {
-          // save reports the error and keeps the last persisted preference.
-        }
-        if (pendingSettings.get(key) === change) {
-          pendingSettings.delete(key);
-          const current = document.getElementById(id);
-          if (current) current.value = prefs[key];
-        }
-      });
-    };
+    if (select) bindPreferenceSelect(select, key);
   }
   if (host) $('#quit-app').onclick = () => host.quit();
 }

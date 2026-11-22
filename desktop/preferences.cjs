@@ -2,6 +2,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { randomUUID } = require('node:crypto');
+const { playbackRates } = require('../shared/timeline.mjs');
 const defaults = {
   theme: 'system',
   closeBehavior: 'tray',
@@ -9,6 +10,7 @@ const defaults = {
   pinned: true,
   place: '',
   recent: [],
+  playbackRate: 1,
 };
 const placeIds = new Set(require('../assets/data/places.json').map(([id]) => id));
 const validPlace = (value) => placeIds.has(value);
@@ -19,6 +21,7 @@ const validators = {
   pinned: (v) => typeof v === 'boolean',
   place: (v) => v === '' || validPlace(v),
   recent: (v) => Array.isArray(v) && v.length <= 5 && v.every(validPlace),
+  playbackRate: (v) => playbackRates.includes(v),
 };
 function preferences(directory) {
   const file = path.join(directory, 'preferences.json');

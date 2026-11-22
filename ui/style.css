@@ -732,6 +732,18 @@ main > * {
   background: var(--primary);
   color: var(--primary-ink);
 }
+.timeline #playback-rate {
+  flex: 0 0 auto;
+  width: 82px;
+  padding-inline: 9px;
+  gap: 7px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+@media (max-width: 960px) {
+  .timeline { gap: 6px; padding-inline: 8px; }
+  .timeline #playback-rate { width: 74px; padding-inline: 6px; }
+}
 .timeline-track {
   flex: 1;
   min-width: 0;
@@ -799,6 +811,10 @@ main > * {
 .timeline-track:hover .time-preview,
 .timeline-track:focus-within .time-preview {
   display: block;
+}
+.time-preview[data-loading]::after {
+  content: ' · 读取中';
+  color: var(--muted);
 }
 .reading {
   margin-top: 15px;

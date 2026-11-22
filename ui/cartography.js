@@ -3,7 +3,8 @@ import { gridIndex } from './levels.js';
 let geography;
 const textures = new WeakMap(),
   images = new Map(),
-  basemapPaths = new WeakMap();
+  basemaps = new Map();
+let basemapPixels = 0;
 export const nationalView = Object.freeze([70, 2.5, 146, 54.5]);
 function indexLines(lines) {
   return lines.map((points) => {
@@ -103,13 +104,18 @@ function palette(layer) {
             ? palettes.rain
             : palettes.pressure;
 }
-function color(stops, v) {
-  let b = stops.findIndex((p) => p[0] >= v);
-  if (b <= 0) return stops[b < 0 ? stops.length - 1 : 0][1];
-  let a = stops[b - 1],
-    z = stops[b],
-    t = (v - a[0]) / (z[0] - a[0]);
-  return a[1].map((val, i) => Math.round(val + (z[1][i] - val) * t));
+function writeColor(pixels, offset, stops, value) {
+  let upper = 0;
+  while (upper < stops.length && stops[upper][0] < value) upper++;
+  if (upper === 0 || upper === stops.length) {
+    pixels.set(stops[Math.min(upper, stops.length - 1)][1], offset);
+  } else {
+    const [lo, a] = stops[upper - 1], [hi, b] = stops[upper];
+    const t = (value - lo) / (hi - lo);
+    for (let channel = 0; channel < 3; channel++)
+      pixels[offset + channel] = Math.round(a[channel] + (b[channel] - a[channel]) * t);
+  }
+  pixels[offset + 3] = 255;
 }
 export function legend(layer) {
   const p = palette(layer),
@@ -139,16 +145,16 @@ function texture(g) {
   const t = c.getContext('2d'),
     pixels = t.createImageData(g.nx, g.ny),
     p = palette(g.layer);
+  const terrain = [111, 113, 116, 255], missing = [32, 60, 84, 255];
   let coverage;
   for (let i = 0; i < g.values.length; i++) {
     let val = scalar(g, i);
     if (val === null) {
       coverage ||= t.createImageData(g.nx, g.ny);
-      coverage.data.set(g.terrainMask?.[i] ? [111, 113, 116, 255] : [32, 60, 84, 255], 4 * i);
+      coverage.data.set(g.terrainMask?.[i] ? terrain : missing, 4 * i);
       continue;
     }
-    let rgb = color(p, val);
-    pixels.data.set([...rgb, 255], 4 * i);
+    writeColor(pixels.data, 4 * i, p, val);
   }
   t.putImageData(pixels, 0, 0);
   const result = { field: c, coverage: null };
@@ -221,7 +227,7 @@ export function extentFor(canvas, box) {
   const { width, height } = canvas.getBoundingClientRect();
   return width && height ? projection(width, height, box).bbox : clampView(box);
 }
-function frame(c, requested, geographic) {
+function frame(c, requested, geographic, quick) {
   const r = c.getBoundingClientRect(),
     width = r.width,
     height = r.height;
@@ -229,7 +235,7 @@ function frame(c, requested, geographic) {
   const view = projection(width, height, requested);
   const { bbox } = view;
   const w = geographic ? view.width : width, h = geographic ? view.height : height;
-  const d = Math.min(window.devicePixelRatio || 1, 2);
+  const d = Math.min(window.devicePixelRatio || 1, quick ? 1 : 2);
   const cw = Math.round(width * d),
     ch = Math.round(height * d);
   if (c.width !== cw || c.height !== ch) {
@@ -252,6 +258,7 @@ function frame(c, requested, geographic) {
   return {
     bbox,
     ctx,
+    pixelRatio: d,
     w,
     h,
     x,
@@ -290,14 +297,50 @@ function outlinePath(f, rings, closed) {
   }
   return path;
 }
-function pathsFor(canvas, frame, geography) {
-  const key = [frame.w, frame.h, ...frame.bbox].join(',');
-  const previous = basemapPaths.get(canvas);
-  if (previous?.key === key) return previous;
-  const paths = { key, land: outlinePath(frame, geography.land, true), coast: outlinePath(frame, geography.coast, false),
-    china: outlinePath(frame, geography.boundary, false) };
-  basemapPaths.set(canvas, paths);
-  return paths;
+function basemapFor(f, geography, shaded) {
+  const key = [f.w, f.h, ...f.bbox, f.pixelRatio, shaded].join(',');
+  const old = basemaps.get(key);
+  if (old) {
+    basemaps.delete(key);
+    basemaps.set(key, old);
+    return old;
+  }
+  function surface() {
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.max(1, Math.round(f.w * f.pixelRatio));
+    canvas.height = Math.max(1, Math.round(f.h * f.pixelRatio));
+    const ctx = canvas.getContext('2d');
+    ctx.scale(canvas.width / f.w, canvas.height / f.h);
+    return ctx;
+  }
+  const base = surface(), border = surface();
+  base.fillStyle = shaded ? 'rgba(18,48,70,.07)' : '#496473';
+  base.fill(outlinePath(f, geography.land, true), 'evenodd');
+  base.strokeStyle = 'rgba(217,234,238,.65)';
+  base.lineWidth = 0.8;
+  base.stroke(outlinePath(f, geography.coast, false));
+  graticule({ ...f, ctx: base }, f.bbox);
+  const china = outlinePath(f, geography.boundary, false);
+  border.lineJoin = border.lineCap = 'round';
+  border.lineWidth = 2.6;
+  border.strokeStyle = 'rgba(20,39,46,.86)';
+  border.stroke(china);
+  border.lineWidth = 1.15;
+  border.strokeStyle = '#fff5d8';
+  border.stroke(china);
+  const result = { base: base.canvas, border: border.canvas, pixels: base.canvas.width * base.canvas.height * 2 };
+  basemaps.set(key, result);
+  basemapPixels += result.pixels;
+  // Share the same geography across frames, staging canvases and synchronized
+  // panels. Limit retained sizes when the window or geographic extent changes.
+  while (basemaps.size > 1 && (basemaps.size > 4 || basemapPixels > 8_000_000)) {
+    const oldest = basemaps.keys().next().value;
+    const retired = basemaps.get(oldest);
+    basemapPixels -= retired.pixels;
+    basemaps.delete(oldest);
+    retired.base.width = retired.border.width = 0;
+  }
+  return result;
 }
 function axisLabel(value, negative, positive) {
   return Math.abs(value) + '°' + (value === 0 || Math.abs(value) === 180 ? '' : value < 0 ? negative : positive);
@@ -327,22 +370,24 @@ function graticule(f, b) {
   for (let l = Math.ceil(b[1] / inc) * inc; l < b[3]; l += inc)
     if (y(l) > 22 && y(l) < h - 22) ctx.fillText(axisLabel(l, 'S', 'N'), 5, y(l) - 3);
 }
-function windLines(f, g) {
+function windLines(f, g, quick) {
   const { ctx, w, h, lon, lat } = f;
-  const spacing = Math.max(15, Math.min(22, w / 31));
+  const spacing = quick ? 30 : Math.max(15, Math.min(22, w / 31));
   ctx.lineWidth = 0.85;
+  if (quick) ctx.beginPath();
   for (let sy = -spacing, j = 0; sy < h + spacing; sy += spacing, j++)
     for (let sx = -spacing, k = 0; sx < w + spacing; sx += spacing, k++) {
       const seed = Math.sin((j + 1) * 78.233 + (k + 1) * 12.9898) * 43758.5453,
         rand = seed - Math.floor(seed);
       let xx = sx + (rand - 0.5) * spacing,
         yy = sy + Math.sin(k * 4 + j) * 0.36 * spacing;
-      ctx.beginPath();
+      if (!quick) ctx.beginPath();
       ctx.moveTo(xx, yy);
       let vx = 0,
         vy = 0,
         valid = false;
-      for (let p = 0; p < 8 + Math.floor(rand * 7); p++) {
+      const steps = quick ? 5 : 8 + Math.floor(rand * 7);
+      for (let p = 0; p < steps; p++) {
         const s = sample(g, lon(xx), lat(yy));
         if (!s || s.value < 0.4) break;
         const lx = (s.u / Math.max(0.3, Math.cos((lat(yy) * Math.PI) / 180))) * (f.x(1) - f.x(0)),
@@ -356,14 +401,20 @@ function windLines(f, g) {
         ctx.lineTo(xx, yy);
         valid = true;
       }
-      if (valid && (k + j) % 3 === 0) {
+      if (valid && (quick || (k + j) % 3 === 0)) {
         ctx.lineTo(xx - vx * 3 - vy * 1.55, yy - vy * 3 + vx * 1.55);
         ctx.moveTo(xx, yy);
         ctx.lineTo(xx - vx * 3 + vy * 1.55, yy - vy * 3 - vx * 1.55);
       }
-      ctx.strokeStyle = 'rgba(222,244,241,' + (0.32 + 0.35 * rand) + ')';
-      ctx.stroke();
+      if (!quick) {
+        ctx.strokeStyle = 'rgba(222,244,241,' + (0.32 + 0.35 * rand) + ')';
+        ctx.stroke();
+      }
     }
+  if (quick) {
+    ctx.strokeStyle = 'rgba(222,244,241,.65)';
+    ctx.stroke();
+  }
 }
 function contours(f, g, bbox) {
   const inc =
@@ -374,30 +425,28 @@ function contours(f, g, bbox) {
   ctx.lineWidth = 0.8;
   const labels = [],
     highlight = new Path2D();
-  for (
-    let row = Math.max(0, Math.floor((g.bbox[3] - bbox[3]) / g.step) - 1);
-    row < Math.min(g.ny - 1, Math.ceil((g.bbox[3] - bbox[1]) / g.step) + 1);
-    row++
-  ) {
-    for (
-      let col = Math.max(0, Math.floor((bbox[0] - g.bbox[0]) / g.step) - 1);
-      col < Math.min(g.nx - 1, Math.ceil((bbox[2] - g.bbox[0]) / g.step) + 1);
-      col++
-    ) {
-      const i = row * g.nx + col,
-        v = [g.values[i], g.values[i + 1], g.values[i + 1 + g.nx], g.values[i + g.nx]];
-      if (v.some((n) => n == null)) continue;
-      const xx = x(g.bbox[0] + col * g.step),
-        yy = y(g.bbox[3] - row * g.step),
-        dx = x(g.step) - x(0),
-        dy = y(-g.step) - y(0);
+  const rowStart = Math.max(0, Math.floor((g.bbox[3] - bbox[3]) / g.step) - 1);
+  const rowEnd = Math.min(g.ny - 1, Math.ceil((g.bbox[3] - bbox[1]) / g.step) + 1);
+  const colStart = Math.max(0, Math.floor((bbox[0] - g.bbox[0]) / g.step) - 1);
+  const colEnd = Math.min(g.nx - 1, Math.ceil((bbox[2] - g.bbox[0]) / g.step) + 1);
+  const dx = x(g.step) - x(0), dy = y(-g.step) - y(0);
+  for (let row = rowStart; row < rowEnd; row++) {
+    const yy = y(g.bbox[3] - row * g.step);
+    for (let col = colStart; col < colEnd; col++) {
+      const i = row * g.nx + col;
+      const a = g.values[i], b = g.values[i + 1], c = g.values[i + 1 + g.nx], d = g.values[i + g.nx];
+      if (a == null || b == null || c == null || d == null) continue;
+      const min = Math.min(a, b, c, d), max = Math.max(a, b, c, d);
+      const first = Math.ceil(min / inc) * inc;
+      if (min === max || first > max) continue;
+      const v = [a, b, c, d], xx = x(g.bbox[0] + col * g.step);
       const pts = [
         [xx, yy],
         [xx + dx, yy],
         [xx + dx, yy + dy],
         [xx, yy + dy],
       ];
-      for (let level = Math.ceil(Math.min(...v) / inc) * inc; level <= Math.max(...v); level += inc) {
+      for (let level = first; level <= max; level += inc) {
         const hit = [];
         for (let n = 0; n < 4; n++) {
           let m = (n + 1) % 4;
@@ -590,15 +639,16 @@ export async function drawMap(canvas, data, options = {}) {
   canvas.paintToken = token;
   const { geography, image, detail } = await prepareMapData(data);
   if (canvas.paintToken !== token || !canvas.isConnected) return;
-  const f = frame(canvas, options.bbox || data?.bbox || nationalView, !options.zonal && !data?.externalImage);
+  const f = frame(canvas, options.bbox || data?.bbox || nationalView,
+    !options.zonal && !data?.externalImage, options.quick);
   if (!f) return;
   try {
-    paint(canvas, f, data, options, geography, image, detail);
+    paint(f, data, options, geography, image, detail);
   } finally {
     f.ctx.restore();
   }
 }
-function paint(canvas, f, data, options, geography, img, detail) {
+function paint(f, data, options, geography, img, detail) {
   const { ctx, w, h, x, y, bbox } = f;
   ctx.fillStyle = '#203c54';
   ctx.fillRect(0, 0, w, h);
@@ -640,24 +690,13 @@ function paint(canvas, f, data, options, geography, img, detail) {
     ctx.fillStyle = 'rgba(15,39,54,.15)';
     ctx.fillRect(0, 0, w, h);
   }
-  const paths = pathsFor(canvas, f, geography);
-  ctx.fillStyle = data?.values || img ? 'rgba(18,48,70,.07)' : '#496473';
-  ctx.fill(paths.land, 'evenodd');
-  ctx.strokeStyle = 'rgba(217,234,238,.65)';
-  ctx.lineWidth = 0.8;
-  ctx.stroke(paths.coast);
-  graticule(f, bbox);
+  const basemap = basemapFor(f, geography, Boolean(data?.values || img));
+  ctx.drawImage(basemap.base, 0, 0, w, h);
   let contourLabels = [];
-  if (data?.v) windLines(f, data);
-  else if (data?.values) contourLabels = contours(f, data, bbox);
-  ctx.lineJoin = 'round';
-  ctx.lineCap = 'round';
-  ctx.lineWidth = 2.6;
-  ctx.strokeStyle = 'rgba(20,39,46,.86)';
-  ctx.stroke(paths.china);
-  ctx.lineWidth = 1.15;
-  ctx.strokeStyle = '#fff5d8';
-  ctx.stroke(paths.china);
+  if (data?.v) windLines(f, data, options.quick);
+  else if (data?.values && !options.quick) contourLabels = contours(f, data, bbox);
+  ctx.drawImage(basemap.border, 0, 0, w, h);
+  ctx.lineJoin = ctx.lineCap = 'round';
   if (data?.storms) drawTrack(f, data, data.valid || new Date().toISOString());
   const occupied = markers(f, options.point, options.tag, options.annotation, options.cities !== false);
   labelContours(ctx, contourLabels, occupied);

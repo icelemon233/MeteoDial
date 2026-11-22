@@ -1,6 +1,7 @@
 const HOUR = 3600000;
 const hourlyLimit = 120;
 const forecastLimit = 240;
+export const playbackRates = Object.freeze([0.25, 0.5, 1, 1.5, 2, 4]);
 
 export function availableLead(hour) {
   return Number.isInteger(hour) && hour >= 0 && hour <= forecastLimit &&

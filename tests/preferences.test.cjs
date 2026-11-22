@@ -23,3 +23,21 @@ test('市级、港澳台与补充县的地点偏好在重开后仍有效', (t) =
   assert.throws(() => service.set({recent:['invalid']}), /无效/);
   assert.deepEqual(preferences(directory).get(), previous);
 });
+
+test('旧资料以正常速度回放，保存的倍速在重开后生效', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'meteodial-playback-rate-'));
+  t.after(() => fs.rmSync(dir, {recursive:true, force:true}));
+  fs.writeFileSync(path.join(dir, 'preferences.json'), JSON.stringify({theme:'dark'}));
+  const settings = preferences(dir);
+  assert.equal(settings.get().playbackRate, 1);
+  settings.set({playbackRate:0.5});
+  const reopened = preferences(dir);
+  assert.equal(reopened.get().playbackRate, 0.5);
+  assert.equal(reopened.get().theme, 'dark');
+  for (const invalid of [0, -1, '2', Infinity, 16])
+    assert.throws(() => reopened.set({playbackRate:invalid}), /无效/);
+  assert.equal(preferences(dir).get().playbackRate, 0.5);
+  fs.writeFileSync(path.join(dir,'preferences.json'), JSON.stringify({playbackRate:'fast',theme:'light'}));
+  assert.equal(preferences(dir).get().playbackRate, 1);
+  assert.equal(preferences(dir).get().theme, 'light');
+});
