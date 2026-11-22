@@ -1,7 +1,9 @@
 MeteoDial · 观象 | 数据来源与署名
 
 区县代表点预报来自 MET Norway 的 Locationforecast。数据使用 CC BY 4.0。观象对源时次进行中文显示、按北京时间汇总和图表绘制。https://api.met.no/doc/TermsOfService
-国家站实况按站号查询「查天气」公开 API，使用各要素自己的 UTC 观测时间。https://q-weather.info/apidoc/  https://q-weather.info/about/
+国家站实况按同一站号查询中国气象局 WIS2 的 core 地面观测与「查天气」，采用三小时内最近的有效气温，同一时刻优先采用 WIS2。各来源保留自己的观测时刻和平均时段。https://wis2node.wis.cma.cn/oapi/collections/urn:wmo:md:cn-cma:data.core.weather.surface-based-observations?f=html  https://wmo.int/wmo-unified-data-policy  https://q-weather.info/apidoc/
+中国气象局城市实况及昼夜预报依据产品列示的站号、日期和时次分别展示。中央气象台预警发布记录保留原标题、列表时间与官方原文入口。https://weather.cma.cn/  https://www.nmc.cn/publish/alarm.html
+中央气象台雷达拼图、单站雷达、风云四号B星云图和天气分析图在查看时从官方产品页读取，保留完整图片、图例和制作标识。图像版权归原发布机构，风云卫星资料来自国家卫星气象中心。https://www.nmc.cn/publish/radar/chinaall.html  https://www.nmc.cn/publish/observations/china/dm/weatherchart-h000.htm  https://www.nmc.cn/publish/satellite/fy4b-visible.htm  https://www.nmc.cn/publish/cms/view/722665831f0a4e98800c41e691444963.html
 国家基准站、基本站、一般站的位置与类别来自 NMC Developers 的 nmc_met_graphics。随包文件 cma_national_station_info.dat 是 4fcbfdd 版本的原始站表（2,420 站），距离据此估算。该独立数据文件的 GPL-3.0 许可见 licences/NMC-station-table-GPL-3.0.txt。https://github.com/nmcdev/nmc_met_graphics/blob/4fcbfddaf551f04cd8e88b6374b87c766ffc4ec7/nmc_met_graphics/resources/stations/cma_national_station_info.dat
 航空站报来自 NOAA Aviation Weather Center 的 METAR 服务。机场索引采用 OurAirports 的公开领域数据。https://aviationweather.gov/data/api/  https://ourairports.com/data/
 风、温度、位势高度、海平面气压、湿度采用 NOAA / NCEP GFS 模式的原始 GRIB2。观象从 NOAA Open Data Dissemination 的公开 S3 数据取样，裁切、换算单位并绘制等值线和风向。https://registry.opendata.aws/noaa-gfs-bdp-pds/

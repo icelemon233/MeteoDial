@@ -28,4 +28,4 @@ npm start
 
 `npm test` runs the tests. `npm run service` starts the local web app at `http://127.0.0.1:4173`. `npm run package` builds the Cinna Windows installer with Inno Setup 7.1.0 and Zig 0.15.2. Optional service and build settings are documented in the [development notes](./docs/development.md).
 
-The main forecast comes from MET Norway. The maps use NOAA GFS, Himawari satellite observations, regional radar from CWA and tropical cyclone tracks from the Hong Kong Observatory. The case studies also include NASA satellite composites and historical records. [Data sources and attribution](./assets/NOTICE.txt)
+MET Norway supplies the hourly forecast. The local weather page also shows CMA city observations and day/night forecasts, provincial warning bulletins, and recent national-station reports from CMA WIS2 and Q-Weather.info. Weather maps include original NMC radar mosaics and individual radar images, Fengyun-4B cloud imagery, and surface and upper-air analyses. [Data sources and attribution](./assets/NOTICE.txt)

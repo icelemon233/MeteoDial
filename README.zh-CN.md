@@ -28,4 +28,4 @@ npm start
 
 `npm test` 运行测试。`npm run service` 启动本地 Web 应用，默认地址是 `http://127.0.0.1:4173`。`npm run package` 使用 Inno Setup 7.1.0 和 Zig 0.15.2 构建 Cinna 系列安装包。可选的服务与打包配置见[开发说明](./docs/development.md)。
 
-区县主预报来自 MET Norway。天气图采用 NOAA GFS 模式、葵花卫星观测、CWA 区域雷达和香港天文台的热带气旋路径。归档案例还收录了 NASA 卫星日合成和机构实况记录。[资料来源与署名](./assets/NOTICE.txt)
+区县逐小时预报来自 MET Norway。「官方城市预报」另列中国气象局的城市实况和逐日昼夜预报。附近站报按相同国家站号对照中国气象局 WIS2 与查天气，可在本地天气查阅省内预警发布记录。天气图可回放中央气象台全国、区域和单站雷达原图、风云四号 B 星云图，以及地面和不同气压层的分析原图。[资料来源与署名](./assets/NOTICE.txt)

@@ -134,6 +134,8 @@ const allowed = [
   'aviationweather.gov',
   'q-weather.info',
   'data.cma.cn',
+  'wis2node.wis.cma.cn',
+  'weather.cma.cn',
   'ncc-cma.net',
   'mee.gov.cn',
   'mem.gov.cn',

@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs');
 const path = require('node:path');
+const { readCmaStation } = require('./cma-stations.cjs');
 const { cached, request } = require('./network.cjs');
 const places = require('../assets/data/places.json');
 const airports = require('../assets/data/stations.json').map(([id, lat, lon, name]) => ({
@@ -121,7 +122,7 @@ function nationalReading(payload, id, now = Date.now()) {
     },
   };
 }
-async function readNational(match) {
+async function readQWeather(match) {
   const payload = await cached(
     'q-weather:realtime:v1:' + match.id,
     5 * 60000,
@@ -138,6 +139,27 @@ async function readNational(match) {
   );
   const station = nationalReading(payload, match.id);
   return station && { ...station, km: match.km ?? null, offline: Boolean(payload.offline) };
+}
+async function readNational(match, readCma=readCmaStation, readQ=readQWeather) {
+  const site=nationalById.get(match.id);
+  if (!site) throw Error('站号不在国家站目录中');
+  const [official,other]=await Promise.allSettled([readCma(match.id),readQ(match)]);
+  const cma=official.status==='fulfilled' && official.value
+    ? {...official.value,station:site.name,grade:site.grade,km:match.km??null} : null;
+  const q=other.status==='fulfilled'?other.value:null;
+  if (cma && (!q || Date.parse(cma.time)>=Date.parse(q.time))) return cma;
+  if (q) return cma ? {...q,cma} : q;
+  const failure=[official,other].find(r=>r.status==='rejected'&&r.reason?.statusCode!==404);
+  if (failure) throw failure.reason;
+  return null;
+}
+async function withCmaReport(result,match) {
+  const id=match.national?.id;
+  if (!id||result.closest?.id!==id||result.cmaChecked) return result;
+  const prior=result.station;
+  const q=prior?.kind==='national'&&prior.id===id&&fresh(Date.parse(prior.time),Date.now())?prior:null;
+  const station=await readNational(match.national,readCmaStation,async()=>q).catch(()=>null);
+  return station?{...result,station,nationalState:'ready',cmaChecked:true}:result;
 }
 async function readAviation(matches) {
   if (!matches.length) return null;
@@ -203,4 +225,4 @@ async function observations(match, readLand = readNational, readAir = readAviati
     return { station: null, closest, nationalState, aviationUnavailable: true };
   }
 }
-module.exports = { matchLocation, matchFromQuery, observations, nationalReading };
+module.exports = { matchLocation, matchFromQuery, observations, nationalReading, readNational, withCmaReport };

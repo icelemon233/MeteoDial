@@ -543,6 +543,21 @@ main > * {
   gap: 9px;
   padding: 10px 12px;
 }
+.map-panel-head:has(.cma-product) { flex-wrap: wrap; }
+.map-panel-head .cma-product { max-width: 100%; }
+.cma-product-select { max-width: 100%; min-width: 5.5em; }
+.refresh-times[hidden] { display: none; }
+.weather-actions { display: flex; align-items: center; gap: 8px; }
+.secondary-report { margin-top: 14px; }
+.secondary-report summary { cursor: pointer; }
+.warning-records { margin: 10px 0; }
+.warning-records ul { list-style: none; padding: 0; margin: 0; }
+.warning-records li { padding: 8px 0; border-top: 1px solid var(--line); }
+.warning-records time { display: block; color: var(--muted); font-size: 12px; }
+.city-product h3 { margin: 14px 0 4px; font-size: 15px; }
+.city-product p { margin: 5px 0; }
+.city-product td small { display: block; color: var(--muted); font-size: 11px; }
+.city-product .textlink { margin-top: 10px; }
 .panel-letter {
   font: 12px var(--mono);
   color: var(--muted);

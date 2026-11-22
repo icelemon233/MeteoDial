@@ -19,6 +19,7 @@ import {
   closeButton,
 } from './base.js';
 import { drawMap } from './cartography.js';
+import { stationTable,showWarnings,showCity } from './cma-weather.js';
 import { liveGridUrl, actualLevel, sourceName, forecastRun } from './levels.js';
 import { forecastTimes, forecastFrame, nearestFrame } from '../shared/timeline.mjs';
 
@@ -203,13 +204,15 @@ function stats(p) {
 }
 export async function showForecast({ main, ctx, place, locationMatch, search }) {
   const placeName = place[7] === 2 && place[3] !== place[1] ? place[3] + ' · ' + place[1] : place[1];
-  main.innerHTML = `<div class="page-head"><div><div class="subtitle">${dateText(Date.now(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</div></div><button class="btn reload">${icon('refresh', 15)}更新</button></div>
+  const warningButton=['香港','澳门','台湾'].includes(place[2])?'':'<button class="btn city-open">官方城市预报</button><button class="btn warning-open">预警发布记录</button>';
+  main.innerHTML = `<div class="page-head"><div><div class="subtitle">${dateText(Date.now(), { year: 'numeric', month: 'long', day: 'numeric', weekday: 'long' })}</div></div><div class="weather-actions">${warningButton}<button class="btn reload">${icon('refresh', 15)}更新</button></div></div>
   <section class="weather-hero"><div class="hero-map"><canvas aria-label="区域近地层风场预报"></canvas></div>
     <div class="hero-copy"><button class="hero-location">${icon('pin', 18)}${escape(placeName)}${icon('down', 13)}</button>
       <div id="now-temp" class="big-temp">—<sup>°</sup></div><div id="obs-line" class="observation-line">正在查询附近站报…</div><div id="hero-change" class="hero-change">正在读取预报…</div><div id="hero-sub" class="hero-sub"></div></div>
     <div class="hero-atlas"><span id="map-stamp">区域天气图</span><a id="hero-open" href="#/maps" class="glass-button">展开天气图 ${icon('out', 15)}</a></div></section>
   <div id="weather-details" class="loading">正在读取逐小时与逐日预报…</div>`;
   $('.hero-location', main).onclick = search;
+  $('.warning-open',main)?.addEventListener('click',()=>showWarnings(place,ctx),{signal:ctx.signal});
   let data,
     station,
     stationReport,
@@ -269,6 +272,7 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
     stationQuery.set('national', locationMatch.national?.id || 'none');
     stationQuery.set('airports', locationMatch.airports.map((s) => s.id).join(','));
   }
+  $('.city-open',main)?.addEventListener('click',()=>showCity(place,stationQuery,ctx),{signal:ctx.signal});
   function missingNational() {
     const closest = stationReport?.closest;
     if (!closest) return '';
@@ -281,30 +285,10 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
     const s = station;
     if (!s) return;
     const isNational = s.kind === 'national';
-    const rows = [['气温', s.temp, '°C', s.time]];
-    if (isNational) {
-      for (const [key, label, unit] of [
-        ['rh', '相对湿度', '%'], ['wind2m', '两分钟平均风速', 'm/s'], ['windDirection2m', '两分钟平均风向', '°'],
-        ['stationPressure', '本站气压', 'hPa'], ['rain1h', '过去一小时降水', 'mm'],
-      ]) {
-        const f = s.fields?.[key];
-        rows.push([label, f?.value, unit, f?.time]);
-      }
-    }
-    const body = rows.map(([name, value, unit, time]) => {
-      let reading = '—';
-      if (Number.isFinite(value)) {
-        if (unit === '°') {
-          const speed = s.fields.wind2m;
-          reading = speed?.value === 0 && speed.time === time ? '静风' : windDir(value) + '（' + fmtNum(value) + '°）';
-        } else {
-          reading = fmtNum(value, unit === '%' ? 0 : 1) + ' ' + unit;
-        }
-      }
-      return `<tr><th scope="row">${name}</th><td>${reading}</td><td>${time ? validText(time) : '—'}</td></tr>`;
-    }).join('');
     const reason = !isNational && missingNational();
-    openDialog(`<div class="modal-head"><h2>${escape(isNational ? s.station : s.id)}${isNational ? '国家站' : '航空站'}</h2>${closeButton()}</div><p class="muted">${escape(isNational ? s.id + ' · ' + s.grade : s.station)} · 距${reference}约 ${fmtNum(s.km, 1)} km · ${escape(s.source || 'NOAA AWC')}${s.offline ? '（缓存站报）' : ''}</p><table class="station-readings"><thead><tr><th>要素</th><th>实测值</th><th>观测时间（北京时）</th></tr></thead><tbody>${body}</tbody></table>${reason ? '<p class="muted">' + escape(reason) + '</p>' : ''}`);
+    const alternative=s.cma?'<details class="secondary-report"><summary>中国气象局 WIS2 · '+validText(s.cma.time)+
+      (s.cma.offline?'（缓存站报）':'')+'</summary>'+stationTable(s.cma)+'</details>':'';
+    openDialog(`<div class="modal-head"><h2>${escape(isNational ? s.station : s.id)}${isNational ? '国家站' : '航空站'}</h2>${closeButton()}</div><p class="muted">${escape(isNational ? s.id + ' · ' + s.grade : s.station)} · 距${reference}约 ${fmtNum(s.km, 1)} km · ${escape(s.source || 'NOAA AWC')}${s.offline ? '（缓存站报）' : ''}</p>${stationTable(s)}${alternative}${reason ? '<p class="muted">' + escape(reason) + '</p>' : ''}`);
   }
   const drawNow = () => {
     if (!ctx.active) return;

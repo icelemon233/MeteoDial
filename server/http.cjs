@@ -3,13 +3,16 @@ const http = require('node:http'),
   fs = require('node:fs/promises'),
   path = require('node:path');
 const { forecast, byId } = require('./weather.cjs');
-const { matchLocation, matchFromQuery, observations } = require('./stations.cjs');
+const { matchLocation, matchFromQuery, observations, withCmaReport } = require('./stations.cjs');
 const { fields, latestRun } = require('./grids.cjs');
 const { resolveLiveGrid } = require('./live-grids.cjs');
 const { automaticLayers, liveDomain, levelChoices } = require('../shared/levels.mjs');
 const { availableLead } = require('../shared/timeline.mjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
 const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sky.cjs');
+const { productTimes, productImage } = require('./cma-products.cjs');
+const { warnings } = require('./cma-warnings.cjs');
+const { cityWeather } = require('./cma-city.cjs');
 const ROOT = path.join(__dirname, '..');
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -32,7 +35,7 @@ async function api(url) {
     case '/api/station': {
       const p = byId.get(q.get('id'));
       if (!p) throw Error('地点不存在');
-      return observations(matchFromQuery(p, q));
+      return {...await observations(matchFromQuery(p,q)),cmaChecked:true};
     }
     case '/api/run':
       return latestRun();
@@ -68,6 +71,20 @@ async function api(url) {
       return radarIndex();
     case '/api/radar':
       return radar(Date.parse(q.get('time')));
+    case '/api/cma-times':
+      return productTimes(q.get('product'));
+    case '/api/cma-image':
+      return productImage(q.get('product'),q.get('time'));
+    case '/api/cma-warnings': {
+      const place=byId.get(q.get('id'));
+      if (!place) throw Object.assign(Error('地点不存在'),{statusCode:400});
+      return warnings(place);
+    }
+    case '/api/cma-city': {
+      const place=byId.get(q.get('id'));
+      if (!place) throw Object.assign(Error('地点不存在'),{statusCode:400});
+      return cityWeather(matchFromQuery(place,q).national?.id);
+    }
     default:
       throw Object.assign(Error('此接口不存在'), { statusCode: 404 });
   }
@@ -82,6 +99,10 @@ const routes = new Set([
   '/api/cyclones',
   '/api/radar-times',
   '/api/radar',
+  '/api/cma-times',
+  '/api/cma-image',
+  '/api/cma-warnings',
+  '/api/cma-city',
 ]);
 function serviceBase(value) {
   if (!value) return null;
@@ -125,7 +146,7 @@ function matchesLiveGrid(grid, query) {
     : grid.layer === choice;
 }
 async function forwarded(remote, url) {
-  const live = url.pathname === '/api/grid' || url.pathname === '/api/run' ||
+  const live = url.pathname.startsWith('/api/cma-') || url.pathname === '/api/grid' || url.pathname === '/api/run' ||
     url.pathname === '/api/satellite-times' || (url.pathname === '/api/satellite' && url.searchParams.get('region') === 'china');
   try {
     const response = await request(remote + url.pathname + url.search, {
@@ -138,6 +159,10 @@ async function forwarded(remote, url) {
         statusCode: response.status,
       });
     if (result === null) throw Error('共享数据服务格式异常');
+    if (url.pathname==='/api/station' && result.closest && !result.cmaChecked) {
+      const place=byId.get(url.searchParams.get('id'));
+      if (place) return withCmaReport(result,matchFromQuery(place,url.searchParams));
+    }
     // Older shared servers do not understand reference cells or automatic layer identifiers.
     if (
       url.pathname === '/api/grid' &&
