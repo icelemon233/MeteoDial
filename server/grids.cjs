@@ -2,6 +2,7 @@
 const { cached } = require('./network.cjs');
 const {
   sources,
+  googleGfs,
   fields,
   gribAddress,
   selectEntries,
@@ -10,8 +11,8 @@ const {
 } = require('./grid-sources.cjs');
 const { fetchField } = require('./grib-field.cjs');
 const { liveDomain } = require('../shared/levels.mjs');
+const { availableLead } = require('../shared/timeline.mjs');
 const HOUR = 3600000;
-const archiveMirror = { ...sources[0], id: 'gfs-google', channel: 'NOAA 开放数据 · Google Cloud' };
 const boxes = {
   asia: [55, 5, 165, 75],
   live: liveDomain.bbox,
@@ -144,13 +145,17 @@ async function readProviderGrid(
 // Historical GFS exports retain their original model, resolution and cycle.
 async function readGrid(run, lead, layer, box = 'asia', resolution = '1p00', step = 1) {
   try {
-    return await readProviderGrid(archiveMirror, run, lead, layer, box, resolution, step);
+    return await readProviderGrid(googleGfs, run, lead, layer, box, resolution, step);
   } catch {
     return readProviderGrid(sources[0], run, lead, layer, box, resolution, step);
   }
 }
 
 async function readLiveGrid(source, run, lead, layer) {
+  if (lead % 3) {
+    if (source.model !== 'gfs' || !availableLead(lead)) throw fieldError('该资料没有所选的逐小时时次');
+    return readProviderGrid(source, run, lead, layer, 'live', '0p25');
+  }
   try {
     return await readProviderGrid(source, run, lead, layer, 'live');
   } catch (error) {

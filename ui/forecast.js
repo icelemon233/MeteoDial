@@ -20,6 +20,7 @@ import {
 } from './base.js';
 import { drawMap } from './cartography.js';
 import { liveGridUrl, actualLevel, sourceName } from './levels.js';
+import { forecastTimes, forecastFrame, nearestFrame } from '../shared/timeline.mjs';
 
 function change(rows) {
   const near = rows.slice(0, 25),
@@ -248,11 +249,9 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
     try {
       modelRun = (await get('/api/run', ctx.signal)).run;
       if (!ctx.active) return;
-      const lead = Math.max(
-        0,
-        Math.min(240, Math.round((Date.now() - Date.parse(modelRun)) / (3 * HOUR)) * 3)
-      );
-      grid = await get(liveGridUrl(modelRun,lead,'autoNear',[place[5],place[4]]),ctx.signal);
+      const times = forecastTimes(modelRun);
+      const frame = forecastFrame(modelRun, times[nearestFrame(times, Date.now())]);
+      grid = await get(liveGridUrl(frame.run, frame.lead, 'autoNear', [place[5], place[4]]), ctx.signal);
       if (!ctx.active) return;
       heroTime = grid.valid;
       $('#map-stamp').textContent = actualLevel(grid,layerNames) + ' · ' + sourceName(grid) + ' ' + validText(grid.valid);

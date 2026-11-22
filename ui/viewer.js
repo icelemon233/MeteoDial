@@ -18,6 +18,8 @@ import {
 import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData } from './cartography.js';
 import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel } from './levels.js';
 import archiveBounds from '../assets/data/archive-domain.json' with { type: 'json' };
+import { forecastTimes, forecastFrame, frameStops, nearestFrame } from '../shared/timeline.mjs';
+import { drawTimeRuler } from './time-ruler.js';
 const memo = new Map();
 function resource(url) {
   // Requests shared by panels outlive a panel switch. Only the current revision paints.
@@ -130,6 +132,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
   const layers = Array.from({ length: 4 }, (_, i) => choices[i % choices.length]);
   let frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
+  const requestedTime = Date.parse(params.get('time'));
+  if (c && !c.climate && Number.isFinite(requestedTime)) index = nearestFrame(frames, requestedTime);
   let run,
     revision = 0,
     playing = false,
@@ -157,7 +161,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   main.innerHTML = `<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
     <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原${c?.climate ? '全球' : '全国'}地图范围">${icon('focus', 15)}</button></div></div>
     <div class="map-grid" data-count="1"></div>
-    <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><div id="time-ticks"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button></div>
+    <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button></div>
     <div id="reading"></div>`;
   const grid = $('.map-grid', main);
   const timeline = $('.timeline', main);
@@ -189,14 +193,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
     try {
       run = (await get('/api/run', ctx.signal)).run;
       if (!ctx.active) return;
-      for (let h = -18; h <= 240; h += h < 48 ? 3 : h < 96 ? 6 : 12)
-        frames.push(Date.parse(run) + h * HOUR);
+      frames = forecastTimes(run);
       forecastFrames = frames.slice();
-      const requestTime = Date.parse(params.get('time')) || Date.now();
-      index = frames.reduce(
-        (a, t, i) => (Math.abs(t - requestTime) < Math.abs(frames[a] - requestTime) ? i : a),
-        0
-      );
+      index = nearestFrame(frames, Number.isFinite(requestedTime) ? requestedTime : Date.now());
       void get('/api/forecast?id=' + place[0], ctx.signal)
         .then((d) => {
           if (ctx.active) {
@@ -217,6 +216,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   if (!ctx.active) return;
   const slider = $('#frame-slider');
+  const ruler = $('#time-ticks'), preview = $('.time-preview', main);
+  let stops = [], hoverFrame = null;
   panels.forEach((p) => {
     $('.layer-select', p).disabled = false;
   });
@@ -240,19 +241,11 @@ export async function showMaps({ main, ctx, place, params }, c) {
     return c?.climate ? seasons[t / 3] : validText(t);
   }
   function updateTicks() {
-    slider.max = String(frames.length - 1);
-    slider.value = String(index);
-    const ticks = [
-      ...new Set([
-        0,
-        Math.floor((frames.length - 1) / 3),
-        Math.floor((2 * (frames.length - 1)) / 3),
-        frames.length - 1,
-      ]),
-    ];
-    $('#time-ticks').innerHTML = ticks
-      .map((i) => '<span>' + frameLabel(frames[i]) + '</span>')
-      .join('');
+    stops = frameStops(frames);
+    hoverFrame = null;
+    slider.max = String(stops.at(-1) || 0);
+    controls(index);
+    drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null);
   }
   async function setMode(observe) {
     const modeVersion = ++modeRevision;
@@ -264,10 +257,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       index = timePinned ? frames.indexOf(requested) : frames.length - 1;
     } else if (!observe && observing) {
       frames = forecastFrames;
-      index = frames.reduce(
-        (a, t, i) => (Math.abs(t - requested) < Math.abs(frames[a] - requested) ? i : a),
-        0
-      );
+      index = nearestFrame(frames, requested);
     }
     observing = observe;
     for (const el of $$('.mode-tabs button')) {
@@ -430,11 +420,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   const observer = new ResizeObserver(repaint);
   observer.observe(grid, { box: 'device-pixel-content-box' });
+  const rulerObserver = new ResizeObserver(() => drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null));
+  rulerObserver.observe(ruler);
   window.addEventListener('resize', repaint, { signal: ctx.signal });
   ctx.onClose(() => {
     clearTimeout(scrubTimer);
     cancelAnimationFrame(redrawFrame);
     observer.disconnect();
+    rulerObserver.disconnect();
     revision++;
     stop();
   });
@@ -473,18 +466,25 @@ export async function showMaps({ main, ctx, place, params }, c) {
       const v = await resource('/api/cyclones');
       return { ...v, valid: iso, type: '机构路径', source: '香港天文台' };
     }
-    const batch = t < Date.parse(run) ? Math.floor(t / (6 * HOUR)) * 6 * HOUR : Date.parse(run);
-    const lead = Math.floor((t - batch) / (3 * HOUR)) * 3;
-    return resource(liveGridUrl(new Date(batch).toISOString(), lead, layer, cursor || point));
+    const forecast = forecastFrame(run, t);
+    if (!forecast) throw Error('该观测时刻没有对应的模式预报');
+    return resource(liveGridUrl(forecast.run, forecast.lead, layer, cursor || point));
   }
   async function loadFrame(layer, time) {
     const data = await dataFor(layer, time);
     await prepareMapData(data);
     return data;
   }
+  function previewAt(target) {
+    preview.textContent = frameLabel(frames[target]);
+    const percent = stops.at(-1) ? 100 * stops[target] / stops.at(-1) : 0;
+    preview.style.setProperty('--time-position', percent + '%');
+  }
   function controls(target) {
-    slider.value = String(target);
+    slider.value = String(stops[target]);
     slider.setAttribute('aria-valuetext', frameLabel(frames[target]));
+    previewAt(hoverFrame ?? target);
+    $('#play').disabled = frames.length < 2;
     $('#prev-frame').disabled = target === 0;
     $('#next-frame').disabled = target === frames.length - 1;
   }
@@ -502,6 +502,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     src.title = data.run ? [
       data.channel, '起报 ' + validText(data.run), '有效 ' + valid,
       data.resolution && '原始网格 ' + data.resolution,
+      data.step && Number.parseFloat(data.resolution) !== data.step && '显示格距 ' + data.step + '°',
       data.preferredLayer && data.layer !== data.preferredLayer && '首选层在此点缺少可用值',
       data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
     ].filter(Boolean).join(' · ') : data.source;
@@ -603,7 +604,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   async function startPlayback(holdFirst = false) {
     clearTimeout(scrubTimer);
-    if (!frames.length) return;
+    if (frames.length < 2) { stop(); return; }
     playing = true;
     autoStart = false;
     const seq = ++playSession, btn = $('#play');
@@ -627,6 +628,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
   }
   function seek(target, debounce) {
+    if (timePinned && !playing && target === index) {
+      controls(index);
+      return;
+    }
     stop();
     timePinned = true;
     modeRevision++;
@@ -634,7 +639,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     revision++;
     controls(target);
     clearTimeout(scrubTimer);
-    if (debounce && !c) scrubTimer = setTimeout(() => void refresh(), 100);
+    if (debounce) scrubTimer = setTimeout(() => void refresh(), c ? 45 : 100);
     else void refresh();
   }
   function pauseAtCurrent() {
@@ -649,11 +654,27 @@ export async function showMaps({ main, ctx, place, params }, c) {
     modeRevision++;
     void startPlayback();
   };
-  slider.onpointerdown = pauseAtCurrent;
-  slider.onkeydown = (e) => {
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End', 'PageDown', 'PageUp'].includes(e.key)) pauseAtCurrent();
+  const track = slider.parentElement;
+  track.onpointermove = (e) => {
+    if (e.buttons || e.pointerType === 'touch') return;
+    const bounds = ruler.getBoundingClientRect();
+    if (!bounds.width) return;
+    const position = (e.clientX - bounds.left) / bounds.width * stops.at(-1);
+    hoverFrame = nearestFrame(stops, position);
+    previewAt(hoverFrame);
   };
-  slider.oninput = () => seek(Number(slider.value), true);
+  track.onpointerleave = () => { hoverFrame = null; previewAt(index); };
+  slider.onpointerdown = () => { hoverFrame = null; previewAt(index); pauseAtCurrent(); };
+  slider.onkeydown = (e) => {
+    const page = Math.max(1, Math.round((frames.length - 1) / 10));
+    const targets = { ArrowLeft: index - 1, ArrowDown: index - 1, ArrowRight: index + 1, ArrowUp: index + 1,
+      Home: 0, End: frames.length - 1, PageDown: index - page, PageUp: index + page };
+    if (!Object.hasOwn(targets, e.key)) return;
+    e.preventDefault();
+    hoverFrame = null;
+    seek(Math.max(0, Math.min(frames.length - 1, targets[e.key])), true);
+  };
+  slider.oninput = () => seek(nearestFrame(stops, Number(slider.value)), true);
   $('#prev-frame').onclick = () => seek(Math.max(0, index - 1));
   $('#next-frame').onclick = () => seek(Math.min(frames.length - 1, index + 1));
 

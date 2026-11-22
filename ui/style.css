@@ -735,18 +735,70 @@ main > * {
 .timeline-track {
   flex: 1;
   min-width: 0;
+  position: relative;
 }
 .timeline input {
   width: 100%;
+  height: 20px;
+  margin: 0;
+  display: block;
   accent-color: var(--accent);
   cursor: pointer;
 }
-.timeline-track > div {
-  display: flex;
-  justify-content: space-between;
+.timeline input:focus-visible {
+  outline-width: 2px;
+  outline-offset: -1px;
+  border-radius: 4px;
+}
+.time-ruler {
+  position: relative;
+  height: 23px;
+  margin-inline: 8px;
   font: 12px var(--font);
+  font-variant-numeric: tabular-nums;
   color: var(--muted);
-  padding: 0 2px;
+  pointer-events: none;
+}
+.time-mark, .time-label {
+  position: absolute;
+}
+.time-mark {
+  width: 1px;
+  height: 4px;
+  background: var(--border-strong);
+}
+.time-mark.major {
+  height: 6px;
+  background: var(--muted);
+}
+.time-label {
+  top: 7px;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.time-label.first { transform: none; }
+.time-label.last { transform: translateX(-100%); }
+.time-preview {
+  display: none;
+  position: absolute;
+  z-index: 2;
+  bottom: calc(100% + 2px);
+  left: var(--time-position);
+  transform: translateX(calc(0% - var(--time-position)));
+  max-width: 100%;
+  padding: 3px 7px;
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  background: var(--surface);
+  color: var(--ink);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.timeline-track:hover .time-preview,
+.timeline-track:focus-within .time-preview {
+  display: block;
 }
 .reading {
   margin-top: 15px;

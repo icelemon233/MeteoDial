@@ -2,6 +2,7 @@
 const { cached, request } = require('./network.cjs');
 const { pressureLevels, heightLevels } = require('../shared/levels.mjs');
 
+const googleGfs = { id: 'gfs-google', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · Google Cloud', resolution: '1p00' };
 const sources = [
   { id: 'gfs', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · AWS', resolution: '1p00' },
   { id: 'nomads', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA NOMADS', resolution: '1p00' },
@@ -27,6 +28,7 @@ const sources = [
     resolution: '0p50',
   },
 ];
+const hourlySources = [googleGfs, ...sources.filter(source => source.model === 'gfs')];
 const fields = {
   wind10: [
     ['UGRD', '10 m above ground'],
@@ -238,6 +240,8 @@ async function published(source, run, lead) {
 }
 module.exports = {
   sources,
+  hourlySources,
+  googleGfs,
   fields,
   gribAddress,
   parseIndex,

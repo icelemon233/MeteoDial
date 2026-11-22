@@ -7,6 +7,7 @@ const { matchLocation, matchFromQuery, observations } = require('./stations.cjs'
 const { fields, latestRun } = require('./grids.cjs');
 const { resolveLiveGrid } = require('./live-grids.cjs');
 const { automaticLayers, liveDomain, levelChoices } = require('../shared/levels.mjs');
+const { availableLead } = require('../shared/timeline.mjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
 const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sky.cjs');
 const ROOT = path.join(__dirname, '..');
@@ -45,10 +46,7 @@ async function api(url) {
         run % (6 * H) !== 0 ||
         run > Date.now() ||
         Date.now() - run > 6 * 864e5 ||
-        !Number.isInteger(lead) ||
-        lead < 0 ||
-        lead > 240 ||
-        lead % 3 !== 0 ||
+        !availableLead(lead) ||
         !(Object.hasOwn(fields, layer) || Object.hasOwn(automaticLayers, layer)) ||
         (rawCell !== null &&
           (!/^(?:-1|0|[1-9]\d*)$/.test(rawCell) || cell >= liveDomain.nx * liveDomain.ny))
@@ -142,7 +140,7 @@ async function forwarded(remote, url) {
     // Older shared servers do not understand reference cells or automatic layer identifiers.
     if (
       url.pathname === '/api/grid' &&
-      url.searchParams.has('cell') &&
+      (url.searchParams.has('cell') || Number(url.searchParams.get('lead')) % 3 !== 0) &&
       !matchesLiveGrid(result, url.searchParams)
     )
       return api(url);
@@ -229,7 +227,7 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
       );
       if (
         !(
-          rel === 'shared/levels.mjs' ||
+          rel === 'shared/levels.mjs' || rel === 'shared/timeline.mjs' ||
           /^(ui\/|assets\/(?:data\/|cases\/|brand\/app-icon-(?:32|256)\.png$|icon\.ico$))/.test(rel)
         ) ||
         rel.includes('..') ||

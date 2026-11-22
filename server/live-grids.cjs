@@ -1,5 +1,5 @@
 'use strict';
-const { sources, fields, fieldError } = require('./grid-sources.cjs');
+const { sources, hourlySources, fields, fieldError } = require('./grid-sources.cjs');
 const { readLiveGrid } = require('./grids.cjs');
 const { automaticLayers, levelChoices, suitable, validPressure } = require('../shared/levels.mjs');
 
@@ -65,7 +65,7 @@ async function resolveLiveGrid(
   lead,
   choice,
   cell = null,
-  { providers = sources, read = readLiveGrid } = {},
+  { providers = lead % 3 ? hourlySources : sources, read = readLiveGrid } = {},
 ) {
   const auto = Object.hasOwn(automaticLayers, choice);
   if (!auto && !Object.hasOwn(fields, choice))
@@ -73,6 +73,7 @@ async function resolveLiveGrid(
   if (auto && (cell === null || cell < 0))
     throw Object.assign(Error('请在东亚模式覆盖范围内选点'), { statusCode: 422 });
   const point = cell === null || cell < 0 ? null : cell;
+  const available = lead % 3 === 0 ? providers : providers.filter(source => source.model === 'gfs');
   const memo = new Map();
   const runTime = new Date(run).getTime(),
     validTime = runTime + lead * 36e5;
@@ -106,7 +107,7 @@ async function resolveLiveGrid(
     firstSurface = null,
     surfaceOffline = false;
   if (auto || fields[choice]?.[0][1].endsWith(' mb')) {
-    for (const provider of providers) {
+    for (const provider of available) {
       try {
         const grid = await get(provider, 'surfacePressure');
         if (!firstSurface && grid.values.some(validPressure)) firstSurface = grid;
@@ -147,7 +148,7 @@ async function resolveLiveGrid(
     return {
       ...grid,
       pointStatus,
-      backupSource: grid.sourceId !== 'gfs',
+      backupSource: grid.sourceId !== available[0]?.id,
       ...(auto
         ? {
             autoRole: choice,
@@ -161,7 +162,7 @@ async function resolveLiveGrid(
   for (const layer of candidates) {
     const pressure = /^(\d+) mb$/.exec(fields[layer][0][1]);
     const p = pressure ? Number(pressure[1]) : null;
-    for (const provider of providers) {
+    for (const provider of available) {
       try {
         const original = await get(provider, layer);
         let grid = terrainGuard(original, firstSurface, p);

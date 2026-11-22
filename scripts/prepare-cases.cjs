@@ -95,6 +95,7 @@ async function prepare(c) {
     return;
   }
   const run = c.run + 'T00:00:00Z';
+  const resolution = c.resolution || '1p00', step = c.step || 1;
   const jobs = [];
   for (const lead of c.leads) {
     for (const layer of c.layers.filter((l) => c.dataMode !== 'reanalysis' && !['track', 'satellite'].includes(l))) {
@@ -103,12 +104,14 @@ async function prepare(c) {
           path.join(folder, layer + '-' + lead + '.json'),
           async () =>
             JSON.stringify(
-              await readGrid(run, lead, layer, 'national', c.resolution || '1p00', c.step || 1)
+              await readGrid(run, lead, layer, 'national', resolution, step)
             ),
           process.argv.includes('--refresh-grids'),
           (text) => {
             const grid = JSON.parse(text);
             return grid.layer === layer && Date.parse(grid.run) === Date.parse(run) && grid.lead === lead &&
+              Date.parse(grid.valid) === Date.parse(run) + lead * H &&
+              grid.resolution === resolution.replace('p', '.') + '°' && grid.step === step &&
               grid.bbox?.length === 4 && grid.bbox.every((v, i) => v === archiveBounds[i]);
           }
         )

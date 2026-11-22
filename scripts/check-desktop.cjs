@@ -68,6 +68,16 @@ async function checkDesktop() {
     assert.equal(await slider.inputValue(), '0');
     await window.locator('.guide-switch').click();
     assert.equal(await window.locator('.reading').count(), 0);
+    await window.locator('#nav [data-nav=cases]').click();
+    await window.locator('.case-tile[href="#/cases/beijing-snow"]').click();
+    await window.waitForFunction(() => document.querySelector('#frame-slider')?.max === '27');
+    const snowSlider = window.locator('#frame-slider');
+    await snowSlider.press('Home');
+    await window.locator('#next-frame').click();
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/10 09:00'));
+    assert.equal(await snowSlider.getAttribute('aria-valuetext'), '12/10 09:00');
+    assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
+    assert.equal(await window.locator('.time-mark').count(), 28);
     assert.deepEqual(errors, []);
     console.log('区县预报、地点搜索、地图布局及循环回放检查通过');
   } finally {

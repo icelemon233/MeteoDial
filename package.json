@@ -1,6 +1,6 @@
 {
   "name": "meteodial",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "MeteoDial · 观象 — 全国区县预报、天气图与天气过程回放",
   "author": "Cinna",
   "main": "desktop/main.cjs",
@@ -36,6 +36,7 @@
       "desktop/**/*",
       "server/**/*",
       "shared/levels.mjs",
+      "shared/timeline.mjs",
       "ui/**/*",
       "assets/data/**/*",
       "assets/cases/**/*",
