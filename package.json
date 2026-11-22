@@ -1,6 +1,6 @@
 {
   "name": "meteodial",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "MeteoDial · 观象 — 全国区县预报、天气图与天气过程回放",
   "author": "Cinna",
   "main": "desktop/main.cjs",
@@ -17,7 +17,8 @@
   },
   "dependencies": {
     "@meri-imperiumi/eccodes-wasm": "2.48.2",
-    "classic-level": "3.0.0"
+    "classic-level": "3.0.0",
+    "numcodecs": "0.3.2"
   },
   "devDependencies": {
     "electron": "45.3.4",
@@ -51,6 +52,9 @@
     ],
     "asar": true,
     "asarUnpack": [
+      "assets/cases/disaster-fields/*.bin",
+      "assets/cases/disaster-columns/*.bin",
+      "assets/cases/disaster-analysis-fields/*.bin",
       "server/grib-decoder.cjs",
       "node_modules/@meri-imperiumi/eccodes-wasm/**/*",
       "node_modules/classic-level/prebuilds/win32-x64/*.node"

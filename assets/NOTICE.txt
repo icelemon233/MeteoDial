@@ -11,6 +11,7 @@ MeteoDial · 观象 | 数据来源与署名
 ECMWF IFS 实时预报 © European Centre for Medium-Range Weather Forecasts (ECMWF)，依据 CC BY 4.0 使用。观象裁切区域、取样、换算单位并加地形遮挡。https://www.ecmwf.int/en/forecasts/datasets/open-data  https://creativecommons.org/licenses/by/4.0/
 重大灾害全国四小时图使用 NOAA / NCEP 编制、NSF NCAR Geoscience Data Exchange 分发的 CFSR 与 CFSv2 Selected Hourly Time-Series Products。归档含分析及短时预报。观象抽取真实有效时次、裁切并进行空间取样，使用同时次地面气压遮挡地下等压面。700 hPa 相对湿度由该层比湿和温度按液态水饱和水汽压换算。降水使用源文件的原生一小时累计量，连续四个完整时段求和，缺测保留。 https://doi.org/10.5065/D6513W89  https://gdex.ucar.edu/datasets/d094001/  https://www.ncei.noaa.gov/products/weather-climate-models/climate-forecast-system
 2008 年冰冻和 2016 年寒潮案例采用 Copernicus Climate Change Service (C3S) 的 ECMWF ERA5 再分析资料，经 WeatherBench 2 在 1.5° 网格保守重采样。观象裁切区域、换算单位并使用同时次地面气压遮挡地下格点。Contains modified Copernicus Climate Change Service information. Neither the European Commission nor ECMWF is responsible for use of the data. https://doi.org/10.24381/cds.bd0915c6  https://doi.org/10.24381/cds.adbb2d47  https://weatherbench2.readthedocs.io/en/latest/data-guide.html
+灾害全景的补充再分析图使用 C3S 的 ERA5 逐小时等压面和地面资料。2023 年以前使用 WeatherBench 2 保守重采样场，此后使用 NSF NCAR 或 Google ARCO-ERA5 的 0.25° 资料。观象在原始有效时刻做水平取样、地形遮挡及单位换算，初步资料标作 ERA5T。详细温湿廓线读取 Google ARCO-ERA5 的同格点地面气压、2 米温度与露点、各等压面的温度与比湿。湿球温度按 Normand 法则估算，冷暖层厚度由湿球零度交点与虚温测高估算。200 hPa 水平散度由同一场的水平风在球面格网上差分得到。https://github.com/google-research/arco-era5  https://gdex.ucar.edu/datasets/d633000/  https://doi.org/10.24381/cds.bd0915c6  https://doi.org/10.24381/cds.adbb2d47
 雨量站日累计对照采用 NOAA Physical Sciences Laboratory（Boulder, Colorado, USA）分发的 CPC Global Unified Gauge-Based Analysis of Daily Precipitation，原始格距 0.5°，图上按 1° 取样。该图按产品日期单独打开，保留海域与缺测掩膜。 https://www.psl.noaa.gov/data/gridded/data.cpc.globalprecip.html
 案例卫星日合成来自 NASA Global Imagery Browse Services，Terra / MODIS Corrected Reflectance (True Color)。影像按案例范围裁剪，观象叠加了海岸、位置与读图标注。https://www.earthdata.nasa.gov/data/tools/gibs
 全国红外云图采用 NASA GIBS 按经纬度配准的葵花 9 号 AHI B13 十分钟观测，匹配图层公布的观测时刻。区域后备图来自日本气象厅气象卫星中心。https://worldview.earthdata.nasa.gov/?l=Himawari_AHI_Band13_Clean_Infrared https://www.data.jma.go.jp/mscweb/data/himawari/ https://www.data.jma.go.jp/mscweb/en/general/note.html
@@ -28,4 +29,4 @@ https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info  https://data.gov.h
 香港分区与澳门堂区代表点采用 GeoNames，按 CC BY 4.0 署名并整理为中文名称。和康县、和安县另以县政府驻地赛图拉镇和红柳镇代表点补充，GeoNames 记录 1279771 和 1281441。
 https://www.geonames.org/  https://creativecommons.org/licenses/by/4.0/
 Electron 附带的开源组件声明见安装目录 LICENSE 与 LICENSES.chromium.html。ecCodes WebAssembly 由 meri-imperiumi / ecCodes-WASM 提供，基于 ECMWF ecCodes，Apache-2.0。相关第三方许可见 licences 文件。
-
+ERA5 云端数据块通过 numcodecs.js 解码，numcodecs.js 与 fflate 的 MIT 许可保存在 assets/licences。https://github.com/manzt/numcodecs.js

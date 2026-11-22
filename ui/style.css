@@ -459,6 +459,27 @@ main > * {
 .event-curve svg path { fill: none; stroke: var(--accent); stroke-width: 1.8; vector-effect: non-scaling-stroke; }
 .event-cursor { stroke: var(--ink); stroke-width: 1; vector-effect: non-scaling-stroke; }
 .event-current { display: block; color: var(--ink); font-variant-numeric: tabular-nums; }
+.profile-open { flex: 0 0 auto; }
+.profile-content { color: var(--ink); }
+.profile-source, .profile-table { font-size: 12px; color: var(--muted); }
+.profile-source { line-height: 1.6; font-variant-numeric: tabular-nums; }
+.profile-figure { margin: 12px 0; }
+.profile-figure figcaption { display:flex; align-items:center; gap:16px; font-size:12px; }
+.profile-figure figcaption span:last-child { margin-inline-start:auto; color: var(--muted); }
+.profile-figure .dry::before, .profile-figure .wet::before { content:''; display:inline-block; width:16px; border-top:3px solid #c58a5a; margin-right:5px; vertical-align:middle; }
+.profile-figure .wet::before { border-color:#4696ac; }
+.profile-plot { display:block; width:100%; height:auto; margin-top:5px; }
+.profile-plot text { font:11px var(--font); fill:var(--muted); }
+.profile-rule { stroke:var(--line); }
+.profile-zero { stroke:var(--muted); stroke-dasharray:3 3; }
+.profile-temp { fill:#c58a5a; stroke:#c58a5a; stroke-width:2; }
+.profile-wetBulb { fill:#4696ac; stroke:#4696ac; stroke-width:2; }
+.profile-assessment { line-height:1.65; }
+.profile-table { margin:12px 0; }
+.profile-table summary { cursor:pointer; color:var(--ink); }
+.profile-table table { margin-top:8px; width:100%; border-collapse:collapse; font-variant-numeric:tabular-nums; }
+.profile-table td,.profile-table th { padding:4px 3px; text-align:right; border-bottom:1px solid var(--line); }
+.profile-table th:first-child { text-align:left; }
 .choose-frame { display: flex; align-items: end; flex-wrap: wrap; gap: 12px; }
 .choose-frame label { display: grid; gap: 5px; font-size: 13px; }
 .choose-frame input { min-height: 32px; padding: 0 8px; background: var(--input); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 5px; }
@@ -529,6 +550,11 @@ main > * {
 }
 .map-heading .guide-switch {
   margin-inline-start: auto;
+}
+@media(max-width:1100px){
+  .map-heading {flex-wrap:wrap;gap:8px 12px;}
+  .map-heading .subtitle {order:1;flex:0 0 100%;margin-top:0;}
+  .map-toolbar {gap:8px;}
 }
 .map-grid {
   display: grid;

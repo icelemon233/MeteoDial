@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 _gdex = threading.BoundedSemaphore(10)
 _ncei = threading.BoundedSemaphore(5)
+_gcs = threading.BoundedSemaphore(48)
 _local = threading.local()
 
 
@@ -19,7 +20,11 @@ def response(url, headers=None, method="GET", timeout=85):
     parts = urlsplit(url)
     if parts.scheme != "https":
         raise ValueError("Archive transport requires HTTPS")
-    gate = _gdex if parts.hostname.endswith(".ucar.edu") else _ncei
+    gate = (
+        _gcs
+        if parts.hostname == "storage.googleapis.com"
+        else _gdex if parts.hostname.endswith(".ucar.edu") else _ncei
+    )
     if not hasattr(_local, "context"):
         _local.context = ssl.create_default_context(cafile=os.getenv("CFS_CA_FILE"))
         _local.opener = urllib.request.build_opener(urllib.request.HTTPSHandler(context=_local.context))

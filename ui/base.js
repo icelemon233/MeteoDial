@@ -153,7 +153,7 @@ export function safeLink(url, text) {
         '</a>'
     : '';
 }
-import { automaticLayers, pressureLevels } from './levels.js';
+import { automaticLayers, pressureLevels,heightLevels } from './levels.js';
 export const layerNames = {
   ...automaticLayers,
   wind10: '离地 10 米风场',
@@ -193,9 +193,13 @@ for (const level of pressureLevels) {
     layerUnit[variable + level] = unit;
   }
 }
-for (const level of [500, 400, 300]) {
+for (const level of heightLevels) {
   layerNames['height' + level] = level + ' hPa 位势高度';
   layerUnit['height' + level] = 'm';
 }
 layerNames.rainRate = '预报降水率';
+layerNames.omega700='700 hPa 垂直速度（ω）';
+layerUnit.omega700='Pa/s';
+layerNames.div200='200 hPa 水平散度';
+layerUnit.div200='10⁻⁵ s⁻¹';
 layerUnit.rainRate = 'mm/h';

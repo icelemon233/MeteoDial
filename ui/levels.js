@@ -1,6 +1,6 @@
 import { gridIndex, liveDomain } from '../shared/levels.mjs';
 import { get } from './base.js';
-export { automaticLayers, pressureLevels, gridIndex, levelFor } from '../shared/levels.mjs';
+export { automaticLayers, pressureLevels,heightLevels, gridIndex, levelFor } from '../shared/levels.mjs';
 
 let cycleRequest;
 export function forecastRun() {

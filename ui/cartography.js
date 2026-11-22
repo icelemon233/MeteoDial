@@ -105,18 +105,20 @@ const palettes = {
   ],
 };
 function palette(layer) {
+  if(layer==='omega700')return [[-1,[39,101,146]],[-0.3,[91,165,183]],[0,[195,199,191]],[0.3,[199,157,103]],[1,[149,94,74]]];
+  if(layer==='div200')return [[-8,[136,88,116]],[-2,[186,144,156]],[0,[194,199,190]],[2,[112,165,174]],[8,[40,108,145]]];
   if (layer === 'rainDay') return palettes.rainDay;
   if (layer === 'rain4h') return palettes.rain4h;
-  if (layer === 'height400' || layer === 'height300') {
-    const offset = layer === 'height400' ? 1650 : 3650;
+  if (['height700','height400','height300','height200'].includes(layer)) {
+    const offset = {height700:-2520,height400:1650,height300:3650,height200:6300}[layer];
     return palettes.height.map(([value, rgb]) => [value + offset, rgb]);
   }
-  if (layer.startsWith('temp') && Number(layer.slice(4)) >= 300) {
-    const offset = { 925: 4, 850: 0, 700: -8, 600: -15, 500: -23, 400: -35, 300: -44 }[layer.slice(4)] || 0;
+  if (layer.startsWith('temp') && Number(layer.slice(4)) >= 200) {
+    const offset = { 925: 4, 850: 0, 700: -8, 600: -15, 500: -23, 400: -35, 300: -44,200:-56 }[layer.slice(4)] || 0;
     return palettes.temp.map(([value, rgb]) => [value + offset, rgb]);
   }
-  if (layer === 'wind300' || layer === 'wind400')
-    return palettes.wind.map(([value, rgb]) => [value * 2, rgb]);
+  if (['wind200','wind300','wind400'].includes(layer))
+    return palettes.wind.map(([value, rgb]) => [value * (layer==='wind200'?3:2), rgb]);
   return layer.startsWith('wind')
     ? palettes.wind
     : layer.startsWith('temp')
@@ -455,7 +457,7 @@ function windLines(f, g, quick) {
 }
 function contours(f, g, bbox) {
   const inc =
-    g.layer.startsWith('height') ? 40 : g.layer.startsWith('temp') ? 4 : g.layer.startsWith('moisture') ? 15 : 4;
+    g.layer.startsWith('height') ? 40 : g.layer.startsWith('temp') ? 4 : g.layer.startsWith('moisture') ? 15 : g.layer==='omega700'?0.2:g.layer==='div200'?2:4;
   const { ctx, x, y } = f;
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(247,250,242,.57)';
@@ -510,7 +512,7 @@ function contours(f, g, bbox) {
             labels.length < 9 &&
             !labels.some((l) => Math.abs(l[0] - px) < 125 && Math.abs(l[1] - py) < 61)
           )
-            labels.push([px, py, level]);
+            labels.push([px, py, Number(level.toFixed(3))]);
         }
       }
     }

@@ -39,6 +39,14 @@ PARAMS = {
     "ps": (3, 0),
     "rain": (1, 8),
 }
+for level in (700, 500, 200):
+    PARAMS[f"u{level}"] = (2, 2)
+    PARAMS[f"v{level}"] = (2, 3)
+for level in (850, 500):
+    PARAMS[f"q{level}"] = (1, 0)
+    PARAMS[f"t{level}"] = (0, 0)
+PARAMS["q2"] = (1, 0)
+PARAMS["z700"] = (3, 5)
 
 
 def get_small(url, path):

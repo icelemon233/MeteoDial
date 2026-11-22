@@ -6,6 +6,8 @@ const { forecast, byId } = require('./weather.cjs');
 const { matchLocation, matchFromQuery, observations, withCmaReport } = require('./stations.cjs');
 const { fields, latestRun } = require('./grids.cjs');
 const { resolveLiveGrid } = require('./live-grids.cjs');
+const {liveProfile}=require('./live-profile.cjs');
+const {divergence}=require('./atmosphere.cjs');
 const { automaticLayers, liveDomain, levelChoices } = require('../shared/levels.mjs');
 const { availableLead } = require('../shared/timeline.mjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
@@ -13,7 +15,7 @@ const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sk
 const { productTimes, productImage } = require('./cma-products.cjs');
 const { warnings } = require('./cma-warnings.cjs');
 const { cityWeather } = require('./cma-city.cjs');
-const { disasterField } = require('./disaster-atlas.cjs');
+const { disasterField,disasterProfile,disasterPoint } = require('./disaster-atlas.cjs');
 const ROOT = path.join(__dirname, '..');
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -40,7 +42,9 @@ async function api(url) {
     }
     case '/api/run':
       return latestRun();
+    case '/api/profile':
     case '/api/grid': {
+      const profile=url.pathname==='/api/profile';
       const run = Date.parse(q.get('run')),
         lead = Number(q.get('lead')),
         layer = q.get('layer'),
@@ -52,11 +56,13 @@ async function api(url) {
         run > Date.now() ||
         Date.now() - run > 6 * 864e5 ||
         !availableLead(lead) ||
-        !(Object.hasOwn(fields, layer) || Object.hasOwn(automaticLayers, layer)) ||
+        (profile ? (cell===null||cell<0) : !(Object.hasOwn(fields, layer) || Object.hasOwn(automaticLayers, layer)||layer==='div200')) ||
         (rawCell !== null &&
           (!/^(?:-1|0|[1-9]\d*)$/.test(rawCell) || cell >= liveDomain.nx * liveDomain.ny))
       )
         throw Object.assign(Error('请选择有效的预报图层、选点和时次'), { statusCode: 400 });
+      if(profile)return liveProfile(run,lead,cell);
+      if(layer==='div200')return divergence(await resolveLiveGrid(run,lead,'wind200',cell));
       return resolveLiveGrid(run, lead, layer, cell);
     }
     case '/api/satellite': {
@@ -95,6 +101,7 @@ const routes = new Set([
   '/api/station',
   '/api/run',
   '/api/grid',
+  '/api/profile',
   '/api/satellite',
   '/api/satellite-times',
   '/api/cyclones',
@@ -127,7 +134,7 @@ function matchesLiveGrid(grid, query) {
   const valid = run + Number(query.get('lead')) * H;
   if (
     !grid?.sourceId ||
-    !Object.hasOwn(fields, grid.layer) ||
+    !(Object.hasOwn(fields, grid.layer) || grid.layer==='div200') ||
     Date.parse(grid.run) !== run ||
     Date.parse(grid.valid) !== valid ||
     grid.nx !== liveDomain.nx ||
@@ -140,13 +147,14 @@ function matchesLiveGrid(grid, query) {
   )
     return false;
   if (grid.layer.startsWith('wind') && grid.v?.length !== grid.values.length) return false;
-  if (fields[grid.layer][0][1].endsWith(' mb') && grid.terrainMask?.length !== grid.values.length)
+  if ((grid.layer==='div200'||fields[grid.layer][0][1].endsWith(' mb')) && grid.terrainMask?.length !== grid.values.length)
     return false;
   return Object.hasOwn(automaticLayers, choice)
     ? grid.autoRole === choice && levelChoices(choice, grid.selectionPressure).includes(grid.layer)
     : grid.layer === choice;
 }
 async function forwarded(remote, url) {
+  if(url.pathname==='/api/profile')return api(url);
   const live = url.pathname.startsWith('/api/cma-') || url.pathname === '/api/grid' || url.pathname === '/api/run' ||
     url.pathname === '/api/satellite-times' || (url.pathname === '/api/satellite' && url.searchParams.get('region') === 'china');
   try {
@@ -212,9 +220,14 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       );
       const url = new URL(req.url, 'http://' + host);
-      if (url.pathname==='/local/disaster-field') {
+      if (['/local/disaster-field','/local/disaster-profile','/local/disaster-point'].includes(url.pathname)) {
         const q=url.searchParams;
-        const field=await disasterField(q.get('id'),q.get('layer'),q.get('time'));
+        const coordinates=['lon','lat'].map(k=>q.has(k)&&q.get(k)?.trim()!==''?Number(q.get(k)):NaN);
+        const xy=q.has('lon')||q.has('lat')?coordinates:null;
+        const field=url.pathname==='/local/disaster-profile'
+          ? await disasterProfile(q.get('id'),q.get('time'),xy,q.get('detail')==='full',q.get('section'))
+          : url.pathname==='/local/disaster-point'?await disasterPoint(q.get('id'),q.get('time'),xy)
+          : await disasterField(q.get('id'),q.get('layer'),q.get('time'),xy);
         if (res.destroyed) return;
         res.writeHead(200,{'Content-Type':mime['.json'],'Cache-Control':'private, max-age=3600'});
         return res.end(JSON.stringify(field));

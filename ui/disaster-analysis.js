@@ -1,4 +1,6 @@
 import { escape, fmtNum, HOUR, layerNames, layerUnit, validText, windDir } from './base.js';
+import { levelChoices, suitable } from '../shared/levels.mjs';
+import { selectionNote } from './pressure-guides.js';
 
 const rain = ['rain4h', 'moisture700', 'wind850', 'height500'];
 const layerOrder = {
@@ -86,15 +88,28 @@ function statistics(b, kind) {
     ' m/s。站点瞬时阵风由观测记录核实。'
   );
 }
-function atmosphere(a, time, name) {
-  const upper = a.u850 != null && a.v850 != null;
-  const u = upper ? a.u850 : a.u10,
-    v = upper ? a.v850 : a.v10;
+export function atmosphere(a, time, name, selected = false) {
+  const hasPressure = Number.isFinite(a.ps);
+  const usable = (role, level) => ![600, 400].includes(level) || suitable(role, 'wind' + level, a.eraPs);
+  const windLevel = hasPressure
+    ? levelChoices('autoTransport', a.ps)
+        .map((k) => Number(k.slice(4)))
+        .find((p) => usable('autoTransport', p) && Number.isFinite(a['u' + p]) && Number.isFinite(a['v' + p]))
+    : a.u850 != null && a.v850 != null
+      ? 850
+      : 10;
+  const wetLevel = hasPressure
+    ? levelChoices('autoMoisture', a.ps)
+        .map((k) => Number(k.slice(8)))
+        .find((p) => usable('autoMoisture', p) && Number.isFinite(a['moisture' + p]))
+    : 700;
+  const u = a['u' + windLevel],
+    v = a['v' + windLevel];
   const parts = [];
   if (u != null && v != null) {
     const wind = Math.hypot(u, v);
     parts.push(
-      (upper ? '850 hPa' : '离地 10 米') +
+      (windLevel === 10 ? '离地 10 米' : windLevel + ' hPa') +
         (wind > 0
           ? ' 吹' + windDir(((Math.atan2(-u, -v) * 180) / Math.PI + 360) % 360) + '，风速为 '
           : ' 风速为 ') +
@@ -102,7 +117,10 @@ function atmosphere(a, time, name) {
         ' m/s',
     );
   }
-  if (a.moisture700 != null) parts.push('700 hPa 相对湿度为 ' + fmtNum(a.moisture700) + '%');
+  if (wetLevel && a['moisture' + wetLevel] != null) {
+    const rh = a['moisture' + wetLevel];
+    parts.push(wetLevel + ' hPa 相对湿度为 ' + fmtNum(rh) + '%' + (rh > 100 ? '（模式格点过饱和）' : ''));
+  }
   if (parts.length < 2 && a.height500 != null)
     parts.push('500 hPa 位势高度为 ' + fmtNum(a.height500) + ' 米');
   if (parts.length < 2 && a.temp2 != null) parts.push('离地 2 米气温为 ' + fmtNum(a.temp2, 1) + '℃');
@@ -110,8 +128,11 @@ function atmosphere(a, time, name) {
     validText(time) +
     '，' +
     name +
-    '附近的参考格点' +
-    (parts.length ? '上，' + parts.join('，') + '。' : '缺测。')
+    (selected ? ' 的格点' : '附近的参考格点') +
+    (parts.length
+      ? '上，' + (hasPressure ? '模式地面气压约 ' + fmtNum(a.ps) + ' hPa，' : '') + parts.join('，') + '。'
+      : '缺测。') +
+    (hasPressure && windLevel ? selectionNote('autoTransport', a.ps, 'wind' + windLevel) : '')
   );
 }
 function compare(b, kind, name) {
@@ -226,8 +247,18 @@ export function overview(event, b, place, report) {
     Boolean,
   );
   const defaults = (layerOrder[event.kind] || rain).map((k) =>
-    k === 'wind850' && b.atFocus.wind850 == null ? 'wind10' : k,
+    b.columnVersion
+      ? {
+          wind850: 'autoTransport',
+          moisture700: 'autoMoisture',
+          height500: b.layers.includes('height400') ? 'autoUpper' : 'height500',
+        }[k] || k
+      : k === 'wind850' && b.atFocus.wind850 == null
+        ? 'wind10'
+        : k,
   );
+  if (b.columnVersion)
+    dataLinks.push(['https://www.ecmwf.int/en/forecasts/dataset/ecmwf-reanalysis-v5', 'ECMWF ERA5 再分析']);
   return {
     id: event.id,
     title: event.title,
@@ -241,7 +272,7 @@ export function overview(event, b, place, report) {
     defaults,
     guides,
     forecast:
-      '读数取自 ' +
+      '曲线取自 ' +
       b.series.lon.toFixed(2) +
       '°E、' +
       b.series.lat.toFixed(2) +
@@ -254,6 +285,6 @@ export function overview(event, b, place, report) {
     method:
       '天气场取自 NCEP ' +
       source +
-      ' 分析和短时预报，按北京时间每四小时取一个原始有效时次。降水由连续四份一小时模式累计量相加，任一份缺测或出现负值时，该格点标为缺测。700 hPa 相对湿度由同时次的温度、比湿计算，相对于液态水。等压面按同时次地面气压遮挡。',
+      ' 分析和短时预报，按北京时间每四小时取原始有效时次。925、600、400 hPa 风场，600、400 hPa 温湿场，400、300 hPa 高度及 700 hPa 垂直速度来自同时次的 ECMWF 再分析。各层按来源的地面气压遮挡，自动选层还核对选点地面气压。湿度由同层温度与比湿按液态水饱和水汽压换算。降水由连续四份一小时模式雨量相加，任一份缺测或为负时保留缺测。',
   };
 }

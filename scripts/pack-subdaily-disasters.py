@@ -16,7 +16,16 @@ import zlib
 
 import numpy as np
 
-from cfs_archive import ROOT, UTC, PRODUCTS, MISSING, event_hours, geometry, month_for, utc_hour
+from cfs_archive import (
+    ROOT,
+    UTC,
+    CORE_PRODUCTS as PRODUCTS,
+    MISSING,
+    event_hours,
+    geometry,
+    month_for,
+    utc_hour,
+)
 
 MAGIC = b"MDCFS4H1"
 CADENCE = 4
@@ -29,23 +38,33 @@ def iso(hour):
     return dt.datetime.fromtimestamp(hour * 3600, UTC).strftime("%Y-%m-%dT%H:00:00.000Z")
 
 
-def encode(fields, leads):
+def encode(fields, leads, order=ORDER, codec="zlib"):
     chunks = [np.asarray(leads, dtype="u1").tobytes()]
-    for key in ORDER:
+    for key in order:
         a = np.stack(fields[key]).astype("<u2", copy=False)
         delta = a.copy()
         delta[:, :, 1:] -= a[:, :, :-1]
         delta[1:] -= delta[:-1].copy()
         chunks.append(delta.view("u1").reshape(-1, 2).T.copy().tobytes())
-    return zlib.compress(b"".join(chunks), 5)
+    raw = b"".join(chunks)
+    if codec == "zstd":
+        from numcodecs import Zstd
+
+        return Zstd(level=17).encode(raw)
+    return zlib.compress(raw, 5)
 
 
-def decode(compressed, count, month):
-    buf = zlib.decompress(compressed)
-    offset = count * 11
-    leads = np.frombuffer(buf, dtype="u1", count=offset).reshape(count, 11)
+def decode(compressed, count, month, order=ORDER, lead_count=11):
+    if compressed.startswith(b"\x28\xb5\x2f\xfd"):
+        from numcodecs import Zstd
+
+        buf = Zstd().decode(compressed)
+    else:
+        buf = zlib.decompress(compressed)
+    offset = count * lead_count
+    leads = np.frombuffer(buf, dtype="u1", count=offset).reshape(count, lead_count)
     result = {}
-    for key in ORDER:
+    for key in order:
         x, y = geometry(month, key == "rain")
         n = count * len(y) * len(x)
         vals = np.frombuffer(buf, dtype="u1", count=n * 2, offset=offset).reshape(2, n)
@@ -59,11 +78,11 @@ def decode(compressed, count, month):
     return result, leads
 
 
-def input_data(cache, month):
+def input_data(cache, month, products=PRODUCTS):
     fields = defaultdict(dict)
     start = utc_hour(month + "-01")
     for source_month in [month_for(start - 1), month]:
-        for product, specs in PRODUCTS.items():
+        for product, specs in products.items():
             f = cache / source_month / (product + ".npz")
             if not f.exists():
                 continue
@@ -134,6 +153,10 @@ def convert(fields, h):
 
 def pack_month(cache, out, month, hours):
     fields = input_data(cache, month)
+    write_month(out, month, hours, lambda h: convert(fields, h), ORDER, MAGIC)
+
+
+def write_month(out, month, hours, frame_at, order, magic, source_meta=None):
     start = utc_hour(month + "-01")
     blocks = []
     offset = 0
@@ -146,30 +169,40 @@ def pack_month(cache, out, month, hours):
         leads = []
         mask = 0
         for h in times:
-            frame, reference = convert(fields, h)
-            for key in ORDER:
+            frame, reference = frame_at(h)
+            for key in order:
                 data[key].append(frame[key])
             leads.append(reference)
             mask |= 1 << ((h % 24) // CADENCE)
-        block = encode(data, leads)
+        block = encode(data, leads, order, "zlib" if magic == MAGIC else "zstd")
         entries[str(day + 1)] = [offset, len(block), mask]
+        if magic != MAGIC:
+            entries[str(day + 1)].append(zlib.crc32(block))
         blocks.append(block)
         offset += len(block)
     header = json.dumps(
-        {"version": 1, "month": month, "cadence": CADENCE, "days": entries}, separators=(",", ":")
+        {
+            "version": 1,
+            "month": month,
+            "cadence": CADENCE,
+            "days": entries,
+            **({"codec": "zstd"} if magic != MAGIC else {}),
+            **(source_meta or {}),
+        },
+        separators=(",", ":"),
     ).encode("ascii")
     out.mkdir(parents=True, exist_ok=True)
     file = out / (month + ".bin")
     with open(str(file) + ".part", "wb") as f:
-        f.write(MAGIC + struct.pack("<I", len(header)) + header)
+        f.write(magic + struct.pack("<I", len(header)) + header)
         for block in blocks:
             f.write(block)
     os.replace(str(file) + ".part", file)
 
 
-def samples_from_month(file):
+def samples_from_month(file, magic=MAGIC, order=ORDER, lead_count=11):
     with file.open("rb") as f:
-        if f.read(8) != MAGIC:
+        if f.read(8) != magic:
             raise ValueError("Wrong archive format")
         size = struct.unpack("<I", f.read(4))[0]
         meta = json.loads(f.read(size))
@@ -177,10 +210,14 @@ def samples_from_month(file):
             raise ValueError("Wrong archive month")
         start = utc_hour(meta["month"] + "-01")
         pos = f.tell()
-        for d, (offset, length, mask) in meta["days"].items():
+        for d, entry in meta["days"].items():
+            offset, length, mask = entry[:3]
             slots = [i for i in range(6) if mask & (1 << i)]
             f.seek(pos + offset)
-            arrays, _ = decode(f.read(length), len(slots), file.stem)
+            block = f.read(length)
+            if len(entry) > 3 and zlib.crc32(block) != entry[3]:
+                raise ValueError("Corrupted archive day block")
+            arrays, _ = decode(block, len(slots), file.stem, order, lead_count)
             for i, slot in enumerate(slots):
                 yield start + 24 * (int(d) - 1) + CADENCE * slot, {k: a[i] for k, a in arrays.items()}
 
@@ -284,8 +321,7 @@ def summaries(events, folder, metadata):
         eligible = [
             i
             for i, (h, r) in enumerate(rows)
-            if r[field] is not None
-            and (not e["map"].get("focus") or iso(h + 8)[:10] == e["map"]["focus"])
+            if r[field] is not None and (not e["map"].get("focus") or iso(h + 8)[:10] == e["map"]["focus"])
         ]
         if not eligible:
             eligible = [i for i, v in enumerate(vals) if v is not None]
@@ -323,9 +359,7 @@ def summaries(events, folder, metadata):
         with open(str(dest) + ".part", "wb") as f:
             f.write(
                 gzip.compress(
-                    json.dumps(
-                        result, ensure_ascii=False, separators=(",", ":"), allow_nan=False
-                    ).encode(),
+                    json.dumps(result, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode(),
                     mtime=0,
                 )
             )

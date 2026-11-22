@@ -4,7 +4,10 @@ const { createEccodes } = require('@meri-imperiumi/eccodes-wasm');
 
 const parameters = {
   TMP: [0, 0],
+  DPT: [0, 6],
   RH: [1, 1],
+  SPFH: [1, 0],
+  VVEL: [2, 8],
   UGRD: [2, 2],
   VGRD: [2, 3],
   HGT: [3, 5],
@@ -94,10 +97,10 @@ function decode(ec, source, run, lead, entry, bytes, bbox, step) {
           out.push(null);
           continue;
         }
-        if (entry.field === 'TMP') v -= 273.15;
+        if (entry.field === 'TMP' || entry.field === 'DPT') v -= 273.15;
         if (entry.field === 'PRES' || entry.field === 'PRMSL') v /= 100;
         if (entry.field === 'PRATE') v *= 3600;
-        const precision = entry.field === 'PRATE' ? 100 : 10;
+        const precision = entry.field === 'SPFH' ? 1e7 : entry.field === 'VVEL' ? 1000 : entry.field === 'PRATE' ? 100 : 10;
         out.push(
           Math.abs(v) < 20000 && (entry.field !== 'PRES' || (v >= 250 && v <= 1100))
             ? Math.round(v * precision) / precision

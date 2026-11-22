@@ -1,6 +1,6 @@
 'use strict';
 const { cached, request } = require('./network.cjs');
-const { pressureLevels, heightLevels } = require('../shared/levels.mjs');
+const { pressureLevels, heightLevels, profileLevels } = require('../shared/levels.mjs');
 
 const googleGfs = { id: 'gfs-google', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · Google Cloud', resolution: '1p00' };
 const sources = [
@@ -36,10 +36,13 @@ const fields = {
     ['VGRD', '10 m above ground'],
   ],
   temp2: [['TMP', '2 m above ground']],
+  q2: [['SPFH', '2 m above ground']],
+  dew2: [['DPT','2 m above ground']],
   pressure: [['PRMSL', 'mean sea level']],
   rainRate: [['PRATE', 'surface']],
   snowFlag: [['CSNOW', 'surface']],
   surfacePressure: [['PRES', 'surface']],
+  omega700: [['VVEL','700 mb']],
 };
 for (const p of pressureLevels) {
   const level = p + ' mb';
@@ -51,12 +54,17 @@ for (const p of pressureLevels) {
   fields['moisture' + p] = [['RH', level]];
 }
 for (const p of heightLevels) fields['height' + p] = [['HGT', p + ' mb']];
+for (const p of profileLevels) {
+  fields['temp' + p] ??= [['TMP',p+' mb']];
+  fields['q' + p] = [['SPFH',p+' mb']];
+}
 
-const ecPressure = { u: 'UGRD', v: 'VGRD', t: 'TMP', r: 'RH', gh: 'HGT' };
+const ecPressure = { u: 'UGRD', v: 'VGRD', t: 'TMP', r: 'RH', gh: 'HGT', w:'VVEL', q:'SPFH' };
 const ecSurface = {
   sp: fields.surfacePressure[0],
   msl: fields.pressure[0],
   '2t': fields.temp2[0],
+  '2d': fields.dew2[0],
   '10u': fields.wind10[0],
   '10v': fields.wind10[1],
 };

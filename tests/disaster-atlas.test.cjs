@@ -81,7 +81,7 @@ test('跨月、跨年、峰值时刻的格点时次和累计边界正确，留�
       const grids = await Promise.all(b.layers.map((l) => disasterField(id, l, time)));
       for (const g of grids) {
         assert.equal(g.valid, time);
-        if (id === '2011-s1') assert.equal(g.source, 'NCEP CFSR');
+        if (id === '2011-s1' && !g.source.startsWith('ECMWF')) assert.equal(g.source, 'NCEP CFSR');
         assert.equal(g.values.length, g.nx * g.ny);
         assert(g.values.some(Number.isFinite));
         assert(g.bbox[0] <= 73 && g.bbox[1] <= 4 && g.bbox[2] >= 135 && g.bbox[3] >= 54);
@@ -92,6 +92,9 @@ test('跨月、跨年、峰值时刻的格点时次和累计边界正确，留�
           assert.equal(g.intervalEnd, g.valid);
           assert.equal(g.sourceRuns.length, 4);
           assert(g.values.every((v) => v === null || v >= 0));
+        } else if(g.source.startsWith('ECMWF')){
+          assert.match(g.type,/再分析/);
+          assert.equal(g.run,undefined);
         } else {
           assert.equal(Date.parse(g.run) + g.lead * H, Date.parse(g.valid));
           assert(g.lead >= 0 && g.lead <= 6);

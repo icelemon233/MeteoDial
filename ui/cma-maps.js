@@ -1,5 +1,6 @@
 import catalog from '../assets/data/cma-products.json' with {type:'json'};
 import {escape} from './base.js';
+import {chartGuide} from './pressure-guides.js';
 export const cmaProducts=new Map(catalog.map(p=>[p.id,p]));
 export const cmaDefaults={cmaRadar:'radar-chinaall',cmaChart:'chart-500',cmaSatellite:'fy4b'};
 const menus = new Map();
@@ -44,12 +45,22 @@ export function reflectLayer(panel,layer) {
   }
   label.firstElementChild.value=layer;
 }
-export function cmaGuide(p) {
+export function chartPeers(ps) {
+  const known=Number.isFinite(ps);
+  const levels=(known?[500,850,700,200,100,925]:[500,200,100]).filter(n=>!known||n<ps);
+  // Keep a surface reference in the four published charts at every altitude.
+  return [...new Set(['chart-000',...levels.map(n=>'chart-'+n)])];
+}
+export function cmaGuide(p,reference=null) {
   if (p.kind==='satellite') return '沿时间轴观察云团的位置和范围。对照同一时次的雷达图，可以看出云系中哪些区域出现了降水回波。';
   if (p.kind!=='chart') return '按原图的 dBZ 色标追踪回波的强弱和移动方向。雷达波束会受地形遮挡，远离雷达时也可能探测不到低层降水。';
-  if (p.id==='chart-000') return '从海平面等压线找高低压中心，再对照锋线两侧站点的风向和温度。';
-  if (['chart-925','chart-850','chart-700'].includes(p.id)) return '顺着站点风羽向上游读风，再对照等高线和温度场，判断这一层有无冷暖空气输送。高地附近要留意气压面与地形的关系。';
-  return '沿等高线找槽和脊，再看风羽的方向与强弱，比较相邻时次中系统的位置。';
+  const guide=chartGuide(p.id)||'按原图图头的有效时刻和图例读图。';
+  const pressure=Number(p.id.slice(6));
+  if(reference&&pressure>0&&pressure>=reference.ps){
+    const alternative=pressure===925?'本站近地冷空气可对照地面站与离地 10 米风。':pressure===850?'在地势较低的上游，仍可对照同层风温追踪冷暖空气的来路。':pressure===700?'在地形以上的上游区域，可比较风羽突变与等高线弯曲，再到更高的有效层追踪当地气流。':'请在该等压面高于地面的区域读图。';
+    return reference.name+'附近同时次的'+reference.source+'地面气压约 '+Math.round(reference.ps)+' hPa，'+pressure+' hPa 在该模式格点受地形遮挡。'+alternative;
+  }
+  return guide;
 }
 export async function sharedObservationTimes(keys,request) {
   const delayed=new Map();

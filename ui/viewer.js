@@ -17,16 +17,19 @@ import {
   closeButton,
 } from './base.js';
 import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData, loadLand } from './cartography.js';
-import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel, forecastRun } from './levels.js';
+import { automaticLayers, pressureLevels,heightLevels, liveGridUrl, sourceName, actualLevel, forecastRun } from './levels.js';
 import archiveBounds from '../assets/data/archive-domain.json' with { type: 'json' };
 import { forecastTimes, forecastFrame, frameStops, nearestFrame, playbackRates } from '../shared/timeline.mjs';
 import { drawTimeRuler } from './time-ruler.js';
 import { bindPreferenceSelect } from './shell.js';
 import { playbackClock } from './playback-clock.js';
 import { playbackBuffer } from './playback-buffer.js';
-import { cmaProducts, cmaDefaults, reflectLayer, cmaGuide, sharedObservationTimes } from './cma-maps.js';
-import { markEventTime } from './disaster-analysis.js';
+import { cmaProducts, cmaDefaults, reflectLayer, cmaGuide, chartPeers,sharedObservationTimes } from './cma-maps.js';
+import { markEventTime,atmosphere } from './disaster-analysis.js';
 import { showGaugeReference } from './gauge-reference.js';
+import {pressureGuide,selectionNote} from './pressure-guides.js';
+import {showProfile} from './pressure-profile.js';
+import {gridIndex,liveDomain} from '../shared/levels.mjs';
 const memo = new Map();
 function cachedResource(url) {
   const hit = memo.get(url);
@@ -59,7 +62,8 @@ function resource(url, group) {
 const liveGroups = {
   '随选点与时次选层': Object.keys(automaticLayers),
   '地面与降水': ['wind10', 'temp2', 'pressure', 'rainRate'],
-  '高空形势': ['height500', 'height400', 'height300'],
+  '位势高度': heightLevels.map(p=>'height'+p),
+  '垂直运动与散度': ['omega700','div200'],
   '定压风场': pressureLevels.map((p) => 'wind' + p),
   '定压气温': pressureLevels.map((p) => 'temp' + p),
   '定压湿度': pressureLevels.map((p) => 'moisture' + p),
@@ -83,18 +87,22 @@ function timesFor(c) {
   if (c.atlas) return Array.from({length:c.atlas.count},(_,i)=>Date.parse(c.atlas.start)+i*c.atlas.cadence*HOUR);
   return c.leads.map(n=>Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
-function caseFrameUrl(c, layer, time) {
-  if (c.atlas) return '/local/disaster-field?'+new URLSearchParams({id:c.id,layer,time:new Date(time).toISOString()});
+function caseFrameUrl(c, layer, time, xy=c.point) {
+  if (c.atlas) {
+    const q=new URLSearchParams({id:c.id,layer,time:new Date(time).toISOString()});
+    if(Object.hasOwn(automaticLayers,layer)&&xy){q.set('lon',xy[0]);q.set('lat',xy[1]);}
+    return '/local/disaster-field?'+q;
+  }
   const folder = '/assets/cases/' + c.id + '/';
   if (layer === 'satellite') return null;
   if (layer === 'track') return folder + 'track.json';
   const lead = (time - Date.parse(c.run + 'T00:00:00Z')) / HOUR;
   return folder + layer + '-' + lead + '.json';
 }
-async function caseFrame(c, layer, time, group) {
+async function caseFrame(c, layer, time, group,xy=c.point) {
   if (c.atlas) {
-    const field=await resource(caseFrameUrl(c,layer,time),group);
-    if (field.layer!==layer || Date.parse(field.valid)!==time) throw Error('历史格点与所选时次或图层不符');
+    const field=await resource(caseFrameUrl(c,layer,time,xy),group);
+    if ((Object.hasOwn(automaticLayers,layer)?field.autoRole!==layer:field.layer!==layer) || Date.parse(field.valid)!==time) throw Error('历史格点与所选时次或图层不符');
     return field;
   }
   if (layer === 'satellite') {
@@ -141,6 +149,8 @@ const guides = {
   zonal: '对同一纬度的各经度取平均，比较纬向平均气压的高值和低值。',
 };
 function guideFor(layer) {
+  const explanation=pressureGuide(layer);
+  if(explanation)return explanation;
   if (guides[layer]) return guides[layer];
   if (layer.startsWith('wind')) return '沿箭头向上游回看，比较进入选点的气流来自哪个方向。';
   if (layer.startsWith('height')) return guides.height500;
@@ -150,7 +160,7 @@ function guideFor(layer) {
 }
 export async function showMaps({ main, ctx, place, params }, c) {
   const available = c?.layers;
-  const defaults = c?.defaults || ['autoUpper', 'autoTransport'];
+  const defaults = c?.defaults || ['autoUpper', 'autoTransport','autoMoisture','temp2'];
   const choices = [...new Set([...defaults, ...(available || ['temp2', 'pressure'])])];
   const layers = Array.from({ length: 4 }, (_, i) => choices[i % choices.length]);
   const forecastLayers=layers.slice();
@@ -187,7 +197,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   let activeStep = null, joining = null;
   let scrubFrame = 0, settleTimer = 0, scrubJob = null, scrubQueued = false, scrubPointer = null;
   let quickVisible = false, nextPreviewAt = 0, frameLoad = null;
-  let shownTime = null, loadingTimer = 0;
+  let shownTime = null, loadingTimer = 0, selectedReading=0,chartReference=null,chartRequest=0;
   const originalBox = nationalView;
   let bbox = [...originalBox], items = {}, forecast = null, requestedComparison = false;
   let viewRevision = 0, redrawFrame = 0;
@@ -212,6 +222,34 @@ export async function showMaps({ main, ctx, place, params }, c) {
     <div id="reading"></div>`;
   const grid = $('.map-grid', main);
   const frameTime = $('#frame-time', main);
+  const profileButton=document.createElement('button');
+  profileButton.type='button';profileButton.className='btn profile-open';profileButton.textContent='温湿廓线';
+  profileButton.disabled=true;profileButton.title='查看选点的气温、湿球温度与雨雪层结';
+  $('.zoom',main).before(profileButton);
+  const joint=document.createElement('button');
+  if(!c||c.atlas?.columnVersion){
+    joint.type='button';joint.className='btn joint-view';joint.textContent='分层联读';
+    joint.title='并排查看高空形势、输送层风、湿度和近地气温';
+    $('.map-layout',main).after(joint);
+  }
+  profileButton.onclick=()=>{
+    const t=shownTime;
+    if(!Number.isFinite(t)||t%HOUR!==0)return;
+    pauseAtCurrent();
+    const xy=cursor||point;
+    if(c){
+      const q=new URLSearchParams({id:c.atlas?c.id:c.event.id,time:new Date(t).toISOString(),lon:xy[0],lat:xy[1]});
+      if(!c.atlas)q.set('section',c.id);
+      const url='/local/disaster-profile?'+q;
+      showProfile({url,detailedUrl:url+'&detail=full',valid:t},ctx);
+    }else{
+      // For a published observation, choose an actual matching model valid
+      // hour and retain its initialization in the column source label.
+      const model=observing?Math.floor(t/(6*HOUR))*6*HOUR:Date.parse(run);
+      const f=observing?{run:new Date(model).toISOString(),lead:(t-model)/HOUR}:forecastFrame(run,t);
+      if(f)showProfile({url:'/api/profile?'+new URLSearchParams({run:f.run,lead:f.lead,cell:gridIndex(liveDomain,...xy)}),valid:t},ctx);
+    }
+  };
   if (c) {
     const pick=document.createElement('button');
     pick.className='btn pick-frame';pick.innerHTML=icon('calendar',15)+'选时次';
@@ -283,6 +321,41 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
   }
   setPanels(c?.atlas ? 4 : 1);
+  function referenceKey(t) {return t+'/'+gridIndex(liveDomain,...(cursor||point));}
+  async function chartPressure(t){
+    if(!Number.isFinite(t)||t%HOUR||Date.now()-t>6*24*HOUR)return null;
+    const key=referenceKey(t);
+    if(chartReference?.key===key)return chartReference;
+    const xy=cursor||point,cell=gridIndex(liveDomain,...xy);
+    if(cell<0)return null;
+    const init=Math.floor(t/(6*HOUR))*6*HOUR;
+    try{
+      const g=await resource(liveGridUrl(new Date(init).toISOString(),(t-init)/HOUR,'surfacePressure',xy));
+      const ps=g.values?.[cell];if(Date.parse(g.valid)!==t||!Number.isFinite(ps))return null;
+      return {key,ps,name:cursor?'选点':place[1],source:g.source};
+    }catch{return null;}
+  }
+  function readChartPressure(t){
+    const rev=++chartRequest;
+    if(c||!visibleLayers().some(k=>cmaProducts.get(k)?.kind==='chart'))return;
+    if(chartReference?.key===referenceKey(t))return;
+    void chartPressure(t).then(r=>{
+      if(ctx.active&&rev===chartRequest&&r?.key===referenceKey(shownTime)){chartReference=r;renderReading();}
+    });
+  }
+  joint.onclick=async()=>{
+    const chart=!c&&observing,wasTime=shownTime,at=referenceKey(wasTime);
+    let keys=['autoUpper','autoTransport','autoMoisture','temp2'];
+    if(chart){
+      const ref=playing?(chartReference?.key===at?chartReference:null):await chartPressure(wasTime);
+      if(!ctx.active||!observing||wasTime!==shownTime||at!==referenceKey(shownTime))return;
+      chartReference=ref;keys=chartPeers(ref?.ps).slice(0,4);
+    }
+    const count=keys.length>=4?4:2;
+    setPanels(count);
+    keys.slice(0,count).forEach((key,i)=>{layers[i]=key;chosenPanels.add(i);reflectLayer(panels[i],key);});
+    if(chart)void setMode(true);else void refreshView();
+  };
   const slider = $('#frame-slider');
   const ruler = $('#time-ticks'), preview = $('.time-preview', main);
   let stops = [], hoverFrame = null, rulerWidth = 0;
@@ -292,7 +365,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const before = observationSource();
     const product=cmaProducts.get(layers[0]), count=Number(btn.dataset.count);
     if (!c && product && count>panels.length) {
-      const peers=product.kind==='chart'?['chart-500','chart-850','chart-700','chart-000']:
+      const peers=product.kind==='chart'?[...chartPeers(chartReference?.key===referenceKey(shownTime)?chartReference.ps:null),'chart-500','chart-700','chart-850']:
         ['radar-chinaall','fy4b','radar-huabei','radar-huadong','radar-huanan'];
       for (let i=panels.length;i<count;i++) {
         if (!chosenPanels.has(i)) layers[i]=peers.find(key=>!layers.slice(0,i).includes(key));
@@ -360,6 +433,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       index = frames.length ? nearestFrame(frames, requested) : 0;
     }
     observing = observe;
+    joint.title=observe?'对照同一分析时次的地面和等压面原图':'并排查看环流形势、输送层风、湿度和近地气温';
     for (const el of $$('.mode-tabs button')) {
       const selected = (el.dataset.mode === 'observation') === observe;
       el.classList.toggle('on', selected);
@@ -452,11 +526,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
       const g = items[i],
         l = g?.layer || choice,
         v = sample(g, ...(cursor || point));
-      if (cmaProducts.has(choice)) return cmaGuide(cmaProducts.get(choice));
+      if (cmaProducts.has(choice)) return cmaGuide(cmaProducts.get(choice),chartReference?.key===referenceKey(shownTime)?chartReference:null);
       if (l === 'radar')
         return '看图上的有效范围和 dBZ 色标，再逐帧观察回波的移动。图像覆盖台湾及邻近海域。';
       if (l === 'rainRate')
         return '颜色表示模式预计的瞬时降水率，单位为毫米每小时。比较前后时次，看降水区的位置如何移动。';
+      if((l==='omega700'||l==='div200')&&Number.isFinite(v?.value)){
+        return (cursor?'选点':place[1])+'附近的'+layerNames[l]+'为 '+fmtNum(v.value,l==='omega700'?3:2)+' '+layerUnit[l]+'。'+guideFor(l);
+      }
       if (g?.v && v?.value != null) {
         const direction = ((Math.atan2(-v.u, -v.v) * 180) / Math.PI + 360) % 360;
         return (
@@ -467,10 +544,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
           '，风速约 ' +
           fmtNum(v.value, 1) +
           ' m/s。' +
-          guideFor(l)
+          (g.autoRole?selectionNote(g.autoRole,g.selectionPressure,l):'')+guideFor(l)
         );
       }
-      return guideFor(l);
+      return (g?.autoRole?selectionNote(g.autoRole,g.selectionPressure,l):'')+guideFor(l);
     }).filter(Boolean);
     const links = c ? [[c.report||c.link,c.reportName||'查看机构原始资料'],[c.outcomeSource,'实况记录'],
       [c.link!==c.report&&c.report?c.link:null,'专题资料'],[c.event?.extraSource,'过程核查资料'],[c.event?.map.source,'时段核查资料'],...(c.dataLinks||[])] : [];
@@ -485,7 +562,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       (c?c.guides:[...new Set(reading)]).map((s,i)=>'<p class="step"><b>'+(i+1)+'</b>'+
         (c?.atlas&&i===1?'<span class="atmosphere-reading">'+escape(s)+'</span>':escape(s))+'</p>').join('')+compare+'</div>'+evidence+'</section>'+(c?.cross?principle(c.cross):'');
     if (c?.atlas) {
-      if (shownTime!==null) markEventTime(c,el,shownTime);
+      if (shownTime!==null) markReading(el,shownTime);
       $('.gauge-reference',el).onclick=()=>{const t=shownTime??frames[index];pauseAtCurrent();showGaugeReference(c,t,ctx);};
     }
     const auto = Object.values(items).find((g) => g?.autoRole);
@@ -521,7 +598,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (v?.belowGround) return '该气压面位于模式地面或地下';
     if (v && v.value === null) return '此格点缺测';
     if (v?.value != null) {
-      let out = fmtNum(v.value, 1) + ' ' + (layerUnit[layer] || '');
+      let out = fmtNum(v.value, layer==='omega700'?3:layer==='div200'?2:1) + ' ' + (layerUnit[layer] || '');
+      if(layer==='omega700')out+=' · '+(v.value<0?'上升':v.value>0?'下沉':'接近零');
+      if(layer==='div200')out+=' · '+(v.value>0?'辐散':v.value<0?'辐合':'接近零');
       if (g.v) {
         const degree = ((Math.atan2(-v.u, -v.v) * 180) / Math.PI + 360) % 360;
         out += ' · 风从 ' + fmtNum(degree) + '° 吹来';
@@ -549,7 +628,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
       }
       if (!cursor) {
         el.textContent = g?.pointStatus==='missing' ? '此时次各源未补到选点，周边格点可点读' :
-          g?.pointStatus==='terrain' ? '选点的气压面位于模式地面或地下' : g?.values ? '点击地图读取格点值' : '';
+          g?.pointStatus==='terrain' ? '选点的气压面位于模式地面或地下' :
+          g?.layer==='omega700' ? '负值表示上升，正值表示下沉。点击地图可读数。' :
+          g?.layer==='div200' ? '正值表示辐散，负值表示辐合。点击地图可读数。' : g?.values ? '点击地图读取格点值' : '';
         return;
       }
       const v = valueFor(g, layers[i] === 'zonal' ? 'zonal' : g?.layer || layers[i], ...cursor);
@@ -612,7 +693,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     stop();
   });
   function frameUrl(layer, t, modelRun = run) {
-    if (c) return caseFrameUrl(c, layer, t);
+    if (c) return caseFrameUrl(c, layer, t,cursor||point);
     const iso = new Date(t).toISOString();
     if (cmaProducts.has(layer)) return '/api/cma-image?'+new URLSearchParams({product:layer,time:iso});
     if (layer === 'satellite') {
@@ -632,7 +713,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     return forecast ? liveGridUrl(forecast.run, forecast.lead, layer, cursor || point) : null;
   }
   async function dataFor(layer, time, group) {
-    if (c) return caseFrame(c, layer, time, group);
+    if (c) return caseFrame(c, layer, time, group,cursor||point);
     let modelRun = run;
     if (!modelRun && !isObservation(layer)) {
       const result = await cycle;
@@ -685,6 +766,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       ? '原始观测图像'
       : layer === 'zonal' ? '纬向平均气压，点选纬度' : '天气图，点选或方向键读取位置，Shift 加方向键平移'));
     $('.kind', panel).textContent = data.type || '预报';
+    $('.kind',panel).title=pressureGuide(data.layer)||'';
     const valid = data.intervalStart&&data.intervalEnd ? validText(data.intervalStart)+' — '+validText(data.intervalEnd)
       : data.period || (data.type === '卫星日合成' ? data.valid + ' UTC' : validText(data.valid));
     const src = $('.map-source', panel);
@@ -696,7 +778,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
       data.step && Number.parseFloat(data.resolution) !== data.step && '显示格距 ' + data.step + '°',
       data.preferredLayer && data.layer !== data.preferredLayer && '首选层在此点缺少可用值',
       data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
-    ].filter(Boolean).join(' · ') : data.source;
+    ].filter(Boolean).join(' · ') : [data.source,data.type,data.channel,data.resolution&&'资料网格 '+data.resolution,data.step&&'显示格距 '+data.step+'°'].filter(Boolean).join(' · ');
+    if(data.selectionPressure!=null)src.title+=' · 选点模式地面气压 '+fmtNum(data.selectionPressure,1)+' hPa '+selectionNote(data.autoRole,data.selectionPressure,data.layer);
+    if(data.derived)src.title+=' · '+data.derived;
     if (data.sourceRuns) {
       const runs=[...new Set(data.sourceRuns)].map(t=>validText(t)).join('、');
       src.title='累计时段 '+valid+'（北京时） · 四份一小时资料的起报时次 '+runs+' · 原始格距 '+data.resolution;
@@ -815,12 +899,27 @@ export async function showMaps({ main, ctx, place, params }, c) {
       const fallback = setTimeout(() => { cancelAnimationFrame(raf); resolve(); }, 100);
     });
   }
+  function markReading(root,time){
+    markEventTime(c,root,time);
+    const rev=++selectedReading,xy=cursor;
+    if(!xy||!c.atlas.columnVersion)return;
+    const el=root.querySelector('.atmosphere-reading');if(!el)return;
+    const q=new URLSearchParams({id:c.id,time:new Date(time).toISOString(),lon:xy[0],lat:xy[1]});
+    el.textContent=validText(time)+' · 正在读取选点气象场…';
+    resource('/local/disaster-point?'+q).then(p=>{
+      if(ctx.active&&el.isConnected&&rev===selectedReading&&Date.parse(p.valid)===time)
+        el.textContent=atmosphere(p.reading,time,fmtNum(p.lon,2)+'°E、'+fmtNum(p.lat,2)+'°N',true);
+    }).catch(()=>{if(ctx.active&&el.isConnected&&rev===selectedReading)el.textContent=validText(time)+' · 此处缺少可用的选点气象场。';});
+  }
   function displayTime(time) {
+    profileButton.disabled=!Number.isFinite(time)||time%HOUR!==0;
+    profileButton.title=profileButton.disabled?'该观测图为非整点时次，可切至整点图查看对应廓线':'查看选点的气温、湿球温度与雨雪层结';
     if (shownTime !== time) {
       frameTime.textContent = frameLabel(time) + ' · 北京时间';
-      if(c?.atlas)markEventTime(c,main,time);
+      if(c?.atlas)markReading(main,time);
     }
     shownTime = time;
+    readChartPressure(time);
     if (time === frames[index]) clearSeekStatus();
   }
   async function refresh(target = index, { animate = false, hold, preview } = {}) {
@@ -1145,14 +1244,17 @@ export async function showMaps({ main, ctx, place, params }, c) {
     readPoint();
   };
   function readPoint() {
-    const reload = !c && visibleLayers().some((id, i) => {
+    if(c?.atlas&&shownTime!==null)markReading(main,shownTime);
+    readChartPressure(shownTime);
+    const reload = (!c||c.atlas) && visibleLayers().some((id, i) => {
       if (Object.hasOwn(automaticLayers, id)) return true;
+      if (c) return false;
       const grid = items[i];
       if (!grid?.values) return false;
       const value = sample(grid, ...(cursor || point));
       return grid.backupSource || grid.pointStatus === 'missing' || (value && value.value === null && !value.belowGround);
     });
-    if (reload) void refreshView();
+    if (reload) {playbackFields.clear();void refreshView();}
     else { repaint(); renderReading(); }
   }
   $('.guide-switch').onclick = (e) => {

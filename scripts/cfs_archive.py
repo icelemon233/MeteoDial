@@ -34,7 +34,7 @@ UTC = dt.timezone.utc
 MISSING = -32768
 # Field name, variable, vertical coordinate in source units, unit check,
 # multiplier and offset for the stored signed integers.
-PRODUCTS = {
+CORE_PRODUCTS = {
     "z500": [("height", "Geopotential_height_isobaric", 50000, "gpm", 1, 0)],
     "wnd850": [(c + "850", c + "-component_of_wind_isobaric", 85000, "m/s", 10, 0) for c in "uv"],
     "q700": [("q", "Specific_humidity_isobaric", 70000, "kg/kg", 1_000_000, 0)],
@@ -45,6 +45,20 @@ PRODUCTS = {
     "wnd10m": [(c + "10", c + "-component_of_wind_height_above_ground", 10, "m/s", 10, 0) for c in "uv"],
     "apcp": [("rain", "Total_precipitation_surface_1_Hour_Accumulation", None, "kg.m-2", 100, 0)],
 }
+COLUMN_PRODUCTS = {
+    "z700": [("z700", "Geopotential_height_isobaric", 70000, "gpm", 1, 0)],
+    "q2m": [("q2", "Specific_humidity_height_above_ground", 2, "kg/kg", 100000, 0)],
+}
+for level in (700, 500, 200):
+    COLUMN_PRODUCTS[f"wnd{level}"] = [
+        (f"{c}{level}", f"{c}-component_of_wind_isobaric", level * 100, "m/s", 10, 0) for c in "uv"
+    ]
+for level in (850, 500):
+    COLUMN_PRODUCTS[f"t{level}"] = [(f"t{level}", "Temperature_isobaric", level * 100, "K", 100, -273.15)]
+    COLUMN_PRODUCTS[f"q{level}"] = [
+        (f"q{level}", "Specific_humidity_isobaric", level * 100, "kg/kg", 100000, 0)
+    ]
+PRODUCTS = {**CORE_PRODUCTS, **COLUMN_PRODUCTS}
 DECL = re.compile(r"(Float32|Float64|Int32)\s+([^\s\[;]+)((?:\[[^\]]+\])+);")
 SHAPE = re.compile(r"\[(?:(\w+)\s*=\s*)?(\d+)\]")
 FORMATS = {"Float32": ">f4", "Float64": ">f8", "Int32": ">i4"}

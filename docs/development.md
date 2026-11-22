@@ -34,6 +34,12 @@ The desktop renderer reads the three boundary layers from `basemap-v1.bin`, whic
 
 On a cold GFS lookup, a slow inventory request can overlap a second small index from another mirror of the same product. The chosen mirror supplies its own offsets and GRIB ranges. A dedicated Node worker verifies and decodes the GRIB messages while the local HTTP service continues serving the interface and case files.
 
+Run `python scripts/pack-disaster-columns.py CACHE` after building the base CFS archive. It writes the supplemental CFS fields and extends each event's reference-point series. Install NumPy, ecCodes and numcodecs for archive preparation. Next run `python scripts/prepare-pressure-analysis.py ERA_CACHE --workers 12` to add the ERA5 fields and finish the event series. Run `node scripts/prepare-case-profiles.cjs PROFILE_CACHE` to bundle each event's focus-hour ERA5 column. Build caches are local to the maintainer. All national case-map fields and the focus columns ship with the installer. Every original time in each of the nine detailed chapters also has an offline source column at its own reference point.
+
+The time on each panel is the source valid time. The reader checks native coordinates, pressure, units and terrain. The input for the ERA5T period is identified by the published ARCO availability dates, and each monthly file retains its analysis label and source resolution. Auxiliary day blocks use lossless Zstandard compression after quantization. The desktop loads one compressed day at a time. [ERA5 pressure data](https://doi.org/10.24381/cds.bd0915c6) · [ARCO archive](https://github.com/google-research/arco-era5)
+
+Live temperature columns use paired same-cycle model temperature and specific humidity. Above-ground levels depend on the local model surface pressure. Historical detail is read at one 0.25° ERA5 grid cell. The published focus column is bundled; other dates or points can show the offline CFS samples while fetching a finer profile. The parcel calculation retains raw supersaturation in reported relative humidity and bounds wet-bulb temperature at saturation. Vertical gaps over 80 hPa are marked in the display and suppress a numerical zero-crossing depth across that gap. [MetPy wet-bulb reference](https://unidata.github.io/MetPy/latest/api/generated/metpy.calc.wet_bulb_temperature.html)
+
 ## Project layout
 
 | Path | Contents |
