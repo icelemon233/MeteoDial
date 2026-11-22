@@ -1,6 +1,6 @@
 {
   "name": "meteodial",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "MeteoDial · 观象 — 全国区县预报、天气图与天气过程回放",
   "author": "Cinna",
   "main": "desktop/main.cjs",
@@ -51,6 +51,7 @@
     ],
     "asar": true,
     "asarUnpack": [
+      "server/grib-decoder.cjs",
       "node_modules/@meri-imperiumi/eccodes-wasm/**/*",
       "node_modules/classic-level/prebuilds/win32-x64/*.node"
     ],

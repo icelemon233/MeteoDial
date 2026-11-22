@@ -1,28 +1,43 @@
-import { get, fmtNum, layerUnit, clockTime } from './base.js';
+import { layerUnit } from './base.js';
 import { gridIndex } from './levels.js';
 let geography;
+let uiTypeface;
+function mapFont(style) {
+  uiTypeface ||= getComputedStyle(document.documentElement).getPropertyValue('--font-ui').trim() || 'sans-serif';
+  return style + ' ' + uiTypeface;
+}
 const textures = new WeakMap(),
   images = new Map(),
   basemaps = new Map();
 let basemapPixels = 0;
 export const nationalView = Object.freeze([70, 2.5, 146, 54.5]);
-function indexLines(lines) {
-  return lines.map((points) => {
-    const bounds = [180, 90, -180, -90];
-    for (const [lon, lat] of points) {
-      bounds[0] = Math.min(bounds[0], lon);
-      bounds[1] = Math.min(bounds[1], lat);
-      bounds[2] = Math.max(bounds[2], lon);
-      bounds[3] = Math.max(bounds[3], lat);
+export function unpackGeography(buffer) {
+  if (buffer.byteLength < 16 || buffer.byteLength % 4) throw Error('地理底图不完整');
+  const words = new Int32Array(buffer);
+  if (words[0] !== 0x3147444d) throw Error('地理底图版本不匹配');
+  const result = {};
+  let at = 1;
+  for (const group of ['land', 'coast', 'boundary']) {
+    const count = words[at++], lines = [];
+    if (!(count > 0 && count <= (words.length - at) / 9)) throw Error('地理分段无效');
+    for (let i = 0; i < count; i++) {
+      const length = words[at++];
+      if (!(length >= 2 && at + 4 + length * 2 <= words.length)) throw Error('地理线段不完整');
+      const bounds = Array.from(words.subarray(at, at + 4), n => n / 10000);
+      at += 4;
+      lines.push({ bounds, points: words.subarray(at, at + length * 2) });
+      at += length * 2;
     }
-    return { points, bounds };
-  });
+    result[group] = lines;
+  }
+  if (at !== words.length) throw Error('地理底图长度不匹配');
+  return result;
 }
 export function loadLand() {
-  return (geography ||= Promise.all([
-    get('/assets/data/land.json?v=4.1.0'), get('/assets/data/coastlines.json'), get('/assets/data/china-boundaries.json'),
-  ])
-    .then(([land, coast, boundary]) => ({ land: indexLines(land), coast: indexLines(coast), boundary: indexLines(boundary) }))
+  return (geography ||= fetch('/assets/data/basemap-v1.bin').then(response => {
+    if (!response.ok) throw Error('无法读取地理底图');
+    return response.arrayBuffer();
+  }).then(unpackGeography)
     .catch((e) => {
       geography = undefined;
       throw e;
@@ -167,19 +182,19 @@ function texture(g) {
 }
 function imageFor(src) {
   if (!images.has(src)) {
-    let img = new Image();
-    const p = new Promise((resolve, reject) => {
-      img.onload = () => resolve(img);
+    const img = new Image(), entry = {};
+    entry.promise = new Promise((resolve, reject) => {
+      img.onload = () => { entry.image = img; resolve(img); };
       img.onerror = () => {
-        images.delete(src);
+        if (images.get(src) === entry) images.delete(src);
         reject(Error('云图图像无法读取'));
       };
     });
     img.src = src;
-    images.set(src, p);
+    images.set(src, entry);
     if (images.size > 28) images.delete(images.keys().next().value);
   }
-  return images.get(src);
+  return images.get(src).promise;
 }
 export function sample(g, lon, lat) {
   if (!g?.values) return null;
@@ -281,11 +296,9 @@ function outlinePath(f, rings, closed) {
     let first = true,
       px = -1000,
       py = -1000;
-    for (let i = 0; i < r.points.length; i++) {
-      const p = r.points[i];
-      const xx = x(p[0]),
-        yy = y(p[1]);
-      if (!first && i < r.points.length - 1 && Math.abs(xx - px) + Math.abs(yy - py) < 0.7) continue;
+    for (let i = 0; i < r.points.length; i += 2) {
+      const xx = x(r.points[i] / 10000), yy = y(r.points[i + 1] / 10000);
+      if (!first && i < r.points.length - 2 && Math.abs(xx - px) + Math.abs(yy - py) < 0.7) continue;
       if (first) {
         path.moveTo(xx, yy);
         first = false;
@@ -297,12 +310,16 @@ function outlinePath(f, rings, closed) {
   }
   return path;
 }
-function basemapFor(f, geography, shaded) {
-  const key = [f.w, f.h, ...f.bbox, f.pixelRatio, shaded].join(',');
+function basemapFor(f, geography, labels) {
+  const key = [f.w, f.h, ...f.bbox, f.pixelRatio].join(',');
   const old = basemaps.get(key);
   if (old) {
     basemaps.delete(key);
     basemaps.set(key, old);
+    if (labels && !old.labelled) {
+      gridLabels({...f, ctx:old.base.getContext('2d')}, f.bbox);
+      old.labelled = true;
+    }
     return old;
   }
   function surface() {
@@ -314,12 +331,14 @@ function basemapFor(f, geography, shaded) {
     return ctx;
   }
   const base = surface(), border = surface();
-  base.fillStyle = shaded ? 'rgba(18,48,70,.07)' : '#496473';
-  base.fill(outlinePath(f, geography.land, true), 'evenodd');
+  const land = outlinePath(f, geography.land, true);
+  base.fillStyle = 'rgba(18,48,70,.07)';
+  base.fill(land, 'evenodd');
   base.strokeStyle = 'rgba(217,234,238,.65)';
   base.lineWidth = 0.8;
   base.stroke(outlinePath(f, geography.coast, false));
   graticule({ ...f, ctx: base }, f.bbox);
+  if (labels) gridLabels({...f, ctx:base}, f.bbox);
   const china = outlinePath(f, geography.boundary, false);
   border.lineJoin = border.lineCap = 'round';
   border.lineWidth = 2.6;
@@ -328,7 +347,8 @@ function basemapFor(f, geography, shaded) {
   border.lineWidth = 1.15;
   border.strokeStyle = '#fff5d8';
   border.stroke(china);
-  const result = { base: base.canvas, border: border.canvas, pixels: base.canvas.width * base.canvas.height * 2 };
+  const result = { base: base.canvas, border: border.canvas, land, labelled: labels,
+    pixels: base.canvas.width * base.canvas.height * 2 };
   basemaps.set(key, result);
   basemapPixels += result.pixels;
   // Share the same geography across frames, staging canvases and synchronized
@@ -345,9 +365,13 @@ function basemapFor(f, geography, shaded) {
 function axisLabel(value, negative, positive) {
   return Math.abs(value) + '°' + (value === 0 || Math.abs(value) === 180 ? '' : value < 0 ? negative : positive);
 }
+function gridInterval(b) {
+  const width = b[2] - b[0];
+  return width > 200 ? 30 : width > 50 ? 10 : width > 15 ? 5 : 2;
+}
 function graticule(f, b) {
   const { ctx, x, y, w, h } = f;
-  const inc = b[2] - b[0] > 200 ? 30 : b[2] - b[0] > 50 ? 10 : b[2] - b[0] > 15 ? 5 : 2;
+  const inc = gridInterval(b);
   ctx.strokeStyle = 'rgba(230,244,246,.20)';
   ctx.lineWidth = 0.65;
   ctx.setLineDash([2, 5]);
@@ -362,8 +386,11 @@ function graticule(f, b) {
   }
   ctx.stroke();
   ctx.setLineDash([]);
+}
+function gridLabels(f, b) {
+  const { ctx, x, y, w, h } = f, inc = gridInterval(b);
   ctx.fillStyle = 'rgba(232,243,247,.78)';
-  ctx.font = '9px Segoe UI';
+  ctx.font = mapFont('9px');
   for (let l = Math.ceil(b[0] / inc) * inc; l < b[2]; l += inc)
     if (x(l) > 26 && x(l) < w - 32)
       ctx.fillText(axisLabel(l, 'W', 'E'), x(l) + 3, h - 7);
@@ -534,7 +561,7 @@ function markers(f, point, tag, annot, showCities) {
       yy = y(lat);
     if (xx < 5 || yy < 10 || xx > w - 5 || yy > h - 18) return;
     if (!special && used.some((p) => Math.abs(p[4] - xx) < 55 && Math.abs(p[5] - yy) < 18)) return;
-    ctx.font = (special ? '600 12px ' : '10px ') + '"Microsoft YaHei UI",sans-serif';
+    ctx.font = mapFont(special ? '600 12px' : '10px');
     const tw = ctx.measureText(txt).width;
     const fits = ([left, base]) => left >= 2 && left + tw < w - 2 && base >= 13 && base < h - 1 &&
       used.every((box) => left > box[2] + 3 || left + tw < box[0] - 3 || base < box[1] - 2 || base - 12 > box[3] + 2);
@@ -608,7 +635,7 @@ function zonal(f, g) {
     yy = (v) => 25 + ((h - 58) * (max - v)) / (max - min);
   ctx.fillStyle = '#203951';
   ctx.fillRect(0, 0, w, h);
-  ctx.font = '11px Segoe UI';
+  ctx.font = mapFont('11px');
   ctx.fillStyle = '#d7e8ef';
   for (let v = min; v <= max; v += 10) {
     ctx.strokeStyle = '#455b70';
@@ -625,35 +652,42 @@ function zonal(f, g) {
   ctx.stroke();
   ['90°N', '45°N', '赤道', '45°S', '90°S'].forEach((s, i) => ctx.fillText(s, xx(i * 18) - 12, h - 11));
 }
-export async function prepareMapData(data) {
-  if (data?.values) texture(data);
-  const [geography, image, detail] = await Promise.all([
-    loadLand(),
+export async function prepareMapData(data, { zonal = false } = {}) {
+  if (data?.values && !zonal) texture(data);
+  const [geography, image] = await Promise.all([
+    zonal || data?.externalImage ? null : loadLand(),
     data?.image ? imageFor(data.image) : null,
-    data?.detailImage ? imageFor(data.detailImage).catch(() => null) : null,
   ]);
-  return { geography, image, detail };
+  return { geography, image };
 }
 export async function drawMap(canvas, data, options = {}) {
   const token = Symbol();
   canvas.paintToken = token;
-  const { geography, image, detail } = await prepareMapData(data);
-  if (canvas.paintToken !== token || !canvas.isConnected) return;
-  const f = frame(canvas, options.bbox || data?.bbox || nationalView,
-    !options.zonal && !data?.externalImage, options.quick);
-  if (!f) return;
-  try {
-    paint(f, data, options, geography, image, detail);
-  } finally {
-    f.ctx.restore();
+  const { geography, image } = await prepareMapData(data, options);
+  const requested = options.bbox || data?.bbox || nationalView;
+  function render(detail) {
+    if (canvas.paintToken !== token || !canvas.isConnected) return null;
+    const f = frame(canvas, requested, !options.zonal && !data?.externalImage, options.quick);
+    if (!f) return null;
+    try { paint(f, data, options, geography, image, detail); }
+    finally { f.ctx.restore(); }
+    return f.bbox;
   }
+  const detail = images.get(data?.detailImage)?.image;
+  const view = render(detail);
+  if (view && data?.detailImage && !detail && !options.quick && view[2] - view[0] < 45) {
+    const b = data.detailBounds;
+    if (b && b[0] < view[2] && b[2] > view[0] && b[1] < view[3] && b[3] > view[1])
+      void imageFor(data.detailImage).then(render).catch(() => {});
+  }
+  return Boolean(view);
 }
 function paint(f, data, options, geography, img, detail) {
   const { ctx, w, h, x, y, bbox } = f;
   ctx.fillStyle = '#203c54';
   ctx.fillRect(0, 0, w, h);
-  if (options.zonal && data?.values) {
-    zonal(f, data);
+  if (options.zonal) {
+    if (data?.values) zonal(f, data);
     return;
   }
   if (data?.values) {
@@ -690,7 +724,8 @@ function paint(f, data, options, geography, img, detail) {
     ctx.fillStyle = 'rgba(15,39,54,.15)';
     ctx.fillRect(0, 0, w, h);
   }
-  const basemap = basemapFor(f, geography, Boolean(data?.values || img));
+  const basemap = basemapFor(f, geography, !options.firstLook);
+  if (!data?.values && !img) { ctx.fillStyle = '#496473'; ctx.fill(basemap.land, 'evenodd'); }
   ctx.drawImage(basemap.base, 0, 0, w, h);
   let contourLabels = [];
   if (data?.v) windLines(f, data, options.quick);
@@ -698,6 +733,7 @@ function paint(f, data, options, geography, img, detail) {
   ctx.drawImage(basemap.border, 0, 0, w, h);
   ctx.lineJoin = ctx.lineCap = 'round';
   if (data?.storms) drawTrack(f, data, data.valid || new Date().toISOString());
+  if (options.firstLook) return;
   const occupied = markers(f, options.point, options.tag, options.annotation, options.cities !== false);
   labelContours(ctx, contourLabels, occupied);
 }

@@ -111,6 +111,26 @@ async function checkDesktop() {
     await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/11 00:00'));
     assert(Number(await snowSlider.getAttribute('data-scrub-samples')) >= 2);
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
+    let releaseLayer;
+    const held = new Promise(resolve => { releaseLayer = resolve; });
+    const slowLayer = '**/beijing-snow/temp2-16.json';
+    await window.route(slowLayer, async route => {
+      await held;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await window.getByRole('button', {name:'四图', exact:true}).click();
+      await window.waitForFunction(() => {
+        const panels = [...document.querySelectorAll('.map-panel')];
+        return panels.length === 4 && panels.slice(0,3).every(p => p.querySelector('.map-source').textContent.includes('12/11 00:00')) &&
+          !panels[3].dataset.layer && !panels[3].querySelector('.map-source').textContent;
+      });
+      await window.locator('#next-frame').click();
+      await window.waitForFunction(() => [...document.querySelectorAll('.map-source')].every(e => e.textContent.includes('12/11 01:00')));
+    } finally {
+      releaseLayer();
+      await window.unroute(slowLayer);
+    }
     assert.deepEqual(errors, []);
     console.log('区县预报、地点搜索、地图布局及循环回放检查通过');
   } finally {

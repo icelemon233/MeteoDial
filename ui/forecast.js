@@ -19,7 +19,7 @@ import {
   closeButton,
 } from './base.js';
 import { drawMap } from './cartography.js';
-import { liveGridUrl, actualLevel, sourceName } from './levels.js';
+import { liveGridUrl, actualLevel, sourceName, forecastRun } from './levels.js';
 import { forecastTimes, forecastFrame, nearestFrame } from '../shared/timeline.mjs';
 
 function change(rows) {
@@ -247,7 +247,7 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
     ctx.onClose(() => ro.disconnect());
     paint();
     try {
-      modelRun = (await get('/api/run', ctx.signal)).run;
+      modelRun = (await forecastRun()).run;
       if (!ctx.active) return;
       const times = forecastTimes(modelRun);
       const frame = forecastFrame(modelRun, times[nearestFrame(times, Date.now())]);

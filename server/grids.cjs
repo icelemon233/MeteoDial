@@ -1,8 +1,9 @@
 'use strict';
-const { cached } = require('./network.cjs');
+const { cached, cachePresent } = require('./network.cjs');
 const {
   sources,
   googleGfs,
+  hourlySources,
   fields,
   gribAddress,
   selectEntries,
@@ -27,14 +28,53 @@ const boxes = {
 function address(run, lead, resolution) {
   return gribAddress(sources[0], run, lead, resolution);
 }
+// Only race the small inventories of two mirrors of the same GFS product. The
+// selected mirror supplies its own offsets, GRIB bytes and provenance.
+function firstGfsIndex(peers, probe, delay = 300) {
+  if (!peers.length) return Promise.resolve({winner: null, errors: new Map()});
+  return new Promise(resolve => {
+    const errors = new Map();
+    let next = 0, done = false, timer;
+    function start() {
+      if (done || next >= peers.length) return;
+      clearTimeout(timer);
+      const peer = peers[next++];
+      Promise.resolve().then(() => probe(peer)).then(() => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        resolve({ winner: peer, errors });
+      }, error => {
+        if (done) return;
+        errors.set(peer.id, error);
+        if (next < peers.length) start();
+        else if (errors.size === peers.length) {
+          done = true;
+          resolve({ winner: null, errors });
+        }
+      });
+      if (next < peers.length) timer = setTimeout(start, delay);
+    }
+    start();
+  });
+}
+const newestCycle = now => Math.floor((now - 4 * HOUR) / (6 * HOUR)) * 6 * HOUR;
 async function findRun(now, providers = sources, probe = published) {
-  const start = Math.floor((now - 4 * HOUR) / (6 * HOUR)) * 6 * HOUR;
+  const start = newestCycle(now);
   let eligible = providers;
   for (let i = 0; i < 6; i++) {
     const run = start - i * 6 * HOUR;
     const earlier = [];
+    const peers = eligible.filter(p => p.id === 'gfs' || p.id === 'gfs-google');
+    let failed;
+    if (peers.length === 2) {
+      const { winner, errors } = await firstGfsIndex(peers, p => probe(p, run, 24));
+      if (winner) return { run: new Date(run).toISOString() };
+      failed = errors;
+    }
     for (const provider of eligible) {
       try {
+        if (failed?.has(provider.id)) throw failed.get(provider.id);
         await probe(provider, run, 24);
         return { run: new Date(run).toISOString() };
       } catch (error) {
@@ -51,7 +91,11 @@ function latestRun() {
   return cached(
     'gfs-latest-v2', // The persisted record is a cycle time, including in 0.3.0.
     15 * 60000,
-    async () => ({ value: await findRun(Date.now()) }),
+    async () => {
+      const now = Date.now(), value = await findRun(now), run = Date.parse(value.run);
+      // The existing publication policy cannot select a newer cycle before this boundary.
+      return { value, expires: run === newestCycle(now) ? run + 10 * HOUR : now + 15 * 60000 };
+    },
     { stale: 36 * HOUR },
   );
 }
@@ -64,6 +108,22 @@ function surfaceValues(source, run, lead, entry, box, step) {
   return cached(key, 10 * 864e5, async () => ({
     value: await fetchField(source, run, lead, entry, boxes[box], step),
   }));
+}
+function gridKey(source, url, layer, extent, step) {
+  return source.id === 'gfs'
+    ? ['gfs-grid-v7', url, layer, extent, step].join(':')
+    : ['model-grid-v1', source.id, url, layer, extent, step].join('|');
+}
+async function liveProviderOrder(run, lead, choice) {
+  const providers = lead % 3 ? hourlySources : sources;
+  const peers = providers.filter(p => p.id === 'gfs' || p.id === 'gfs-google');
+  const resolution = lead % 3 ? '0p25' : '1p00';
+  const firstField = Object.hasOwn(fields, choice) ? choice : 'surfacePressure';
+  const present = await Promise.all(providers.map(p => p.model === 'gfs' &&
+    cachePresent(gridKey(p, gribAddress(p, run, lead, resolution), firstField, liveDomain.bbox.join(','), 1))));
+  let winner = providers.find((_, i) => present[i]);
+  if (!winner) ({winner} = await firstGfsIndex(peers, p => published(p, run, lead, resolution)));
+  return winner ? [winner, ...providers.filter(p => p !== winner)] : providers;
 }
 async function readProviderGrid(
   source,
@@ -82,10 +142,7 @@ async function readProviderGrid(
   const url = gribAddress(source, run, lead, resolution);
   const pressureLevel = /^(\d+) mb$/.exec(specs[0][1]);
   const extent = box === 'asia' ? box : bbox.join(',');
-  const key =
-    source.id === 'gfs'
-      ? ['gfs-grid-v7', url, layer, extent, step].join(':')
-      : ['model-grid-v1', source.id, url, layer, extent, step].join('|');
+  const key = gridKey(source, url, layer, extent, step);
   const grid = await cached(key, 10 * 864e5, async () => {
     // Resolve all components, including the terrain field, before starting any byte-range reads.
     const entries = await selectEntries(
@@ -178,4 +235,5 @@ async function readLiveGrid(source, run, lead, layer) {
       values: extend(old.values, null), v: extend(old.v, null), terrainMask: extend(old.terrainMask, 0) };
   }
 }
-module.exports = { fields, boxes, readGrid, readLiveGrid, readProviderGrid, latestRun, findRun, address };
+module.exports = { fields, boxes, readGrid, readLiveGrid, readProviderGrid, liveProviderOrder,
+  latestRun, findRun, firstGfsIndex, address };

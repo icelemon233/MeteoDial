@@ -12,6 +12,29 @@ const { observationTimes } = require('../server/sky.cjs');
 const maps = () => import(pathToFileURL(path.join(root, 'ui/cartography.js')).href);
 const viewport = (width, height) => ({ getBoundingClientRect: () => ({ left: 0, top: 0, width, height }) });
 
+test('首次读取的紧凑底图逐点保留三组源数据、边界范围和日期线分段', async () => {
+  const { unpackGeography } = await maps();
+  const file = fs.readFileSync(path.join(root, 'assets/data/basemap-v1.bin'));
+  const buffer = file.buffer.slice(file.byteOffset, file.byteOffset + file.byteLength);
+  const geography = unpackGeography(buffer);
+  for (const [group, filename] of [['land','land'], ['coast','coastlines'], ['boundary','china-boundaries']]) {
+    const original = require('../assets/data/' + filename + '.json');
+    assert.equal(geography[group].length, original.length);
+    for (const [i, points] of original.entries()) {
+      const line = geography[group][i], bounds = [180,90,-180,-90];
+      assert.equal(line.points.length, points.length * 2);
+      for (const [j,[lon,lat]] of points.entries()) {
+        assert.equal(line.points[j*2] / 10000, lon || 0);
+        assert.equal(line.points[j*2+1] / 10000, lat || 0);
+        bounds[0] = Math.min(bounds[0], lon); bounds[1] = Math.min(bounds[1], lat);
+        bounds[2] = Math.max(bounds[2], lon); bounds[3] = Math.max(bounds[3], lat);
+      }
+      assert.deepEqual(line.bounds, bounds.map(n => n || 0));
+    }
+  }
+  assert.throws(() => unpackGeography(buffer.slice(0, -4)), /不完整|无效/);
+});
+
 test('全国红外回放仅使用源目录已公布的观测时刻，保留扫描缺口', () => {
   const xml = '<Layer><Name>Himawari_AHI_Band13_Clean_Infrared</Name>' +
     '<Dimension name="time">2023-12-10T00:00:00Z/2023-12-10T00:20:00Z/PT10M,2023-12-10T00:40:00Z</Dimension></Layer>';

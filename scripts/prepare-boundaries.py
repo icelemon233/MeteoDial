@@ -2,6 +2,7 @@
 import argparse
 import hashlib
 import json
+import struct
 from pathlib import Path
 from urllib.request import urlopen
 
@@ -33,6 +34,22 @@ def coordinates(vertices):
 def write_paths(name, paths):
     (ROOT / 'assets/data' / name).write_text(
         json.dumps(paths, separators=(',', ':')) + '\n', encoding='utf8')
+
+
+def pack_basemap():
+    folder = ROOT / 'assets/data'
+    output = bytearray(b'MDG1')
+    for filename in ('land.json', 'coastlines.json', 'china-boundaries.json'):
+        lines = json.loads((folder / filename).read_text('utf8'))
+        output.extend(struct.pack('<I', len(lines)))
+        for line in lines:
+            points = [(round(lon * 10000), round(lat * 10000)) for lon, lat in line]
+            lons, lats = zip(*points)
+            output.extend(struct.pack('<I4i', len(points), min(lons), min(lats), max(lons), max(lats)))
+            output.extend(b''.join(struct.pack('<2i', *point) for point in points))
+    tmp = folder / 'basemap-v1.bin.part'
+    tmp.write_bytes(output)
+    tmp.replace(folder / 'basemap-v1.bin')
 
 
 def world_paths(folder, layer):
@@ -82,6 +99,7 @@ def main():
     write_paths('china-boundaries.json', paths)
     write_paths('land.json', world_paths(folder, 'land'))
     write_paths('coastlines.json', world_paths(folder, 'coastline'))
+    pack_basemap()
 
 
 if __name__ == '__main__':

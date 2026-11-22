@@ -13,10 +13,9 @@ import {
   layerNames,
   layerUnit,
   safeLink,
-  failBox,
 } from './base.js';
-import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData } from './cartography.js';
-import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel } from './levels.js';
+import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData, loadLand } from './cartography.js';
+import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel, forecastRun } from './levels.js';
 import archiveBounds from '../assets/data/archive-domain.json' with { type: 'json' };
 import { forecastTimes, forecastFrame, frameStops, nearestFrame, playbackRates } from '../shared/timeline.mjs';
 import { drawTimeRuler } from './time-ruler.js';
@@ -80,9 +79,57 @@ function caseDate(c) {
 function timesFor(c) {
   return c.climate ? [0, 3, 6, 9] : c.leads.map((n) => Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
+function caseFrameUrl(c, layer, time) {
+  if (c.climate) return '/assets/cases/belts/climate-' + time + '.json';
+  const folder = '/assets/cases/' + c.id + '/';
+  if (layer === 'satellite') return null;
+  if (layer === 'track') return folder + 'track.json';
+  const lead = (time - Date.parse(c.run + 'T00:00:00Z')) / HOUR;
+  return folder + layer + '-' + lead + '.json';
+}
+async function caseFrame(c, layer, time, group) {
+  if (layer === 'satellite') {
+    const date = new Date(time).toISOString().slice(0, 10), folder = '/assets/cases/' + c.id + '/';
+    return { image: folder + 'national-' + date + '.jpg', bbox: archiveBounds,
+      detailImage: folder + date + '.jpg', detailBounds: c.bbox, valid: date,
+      source: 'NASA GIBS · Terra / MODIS', type: '卫星日合成' };
+  }
+  const data = await resource(caseFrameUrl(c, layer, time), group);
+  return layer === 'track' ? { ...data, valid: new Date(time).toISOString() } : data;
+}
+export async function prepareLiveMap(place, requested) {
+  void loadLand().catch(() => {});
+  const {run} = await forecastRun();
+  const times = forecastTimes(run), time = times[nearestFrame(times, requested ?? Date.now())];
+  const frame = forecastFrame(run, time);
+  if (frame) await prepareMapData(await resource(liveGridUrl(frame.run, frame.lead, 'autoUpper', [place[5], place[4]])));
+}
 export function showCases({ main, ctx, catalog }) {
   main.innerHTML = `<div class="case-browse"><div class="case-filter seg">${['全部', '大尺度环流', '海洋天气', '锋面与地形'].map((x, i) => `<button class="${i ? '' : 'on'}">${x}</button>`).join('')}</div><a class="btn" href="#/cases/disasters">${icon('book',16)}重大气象灾害档案 ${icon('right',14)}</a></div><div id="case-list" class="case-grid"></div>`;
+  const list = $('#case-list', main);
+  let coverObserver, intentTimer;
+  function warm(tile, delay) {
+    clearTimeout(intentTimer);
+    const c = catalog.find(entry => tile.hash === '#/cases/' + entry.id);
+    if (!c) return;
+    intentTimer = setTimeout(() => {
+      if (!ctx.active) return;
+      void loadLand().catch(() => {});
+      const frame = timesFor(c)[Math.floor(c.leads?.length / 2 || 0)];
+      void caseFrame(c, c.defaults[0], frame).then(prepareMapData).catch(() => {});
+    }, delay);
+  }
+  for (const event of ['pointerover', 'focusin']) list.addEventListener(event, e => {
+    const tile = e.target.closest('.case-tile');
+    if (tile && !tile.contains(e.relatedTarget)) warm(tile, event === 'focusin' ? 0 : 80);
+  });
+  for (const event of ['pointerout', 'focusout']) list.addEventListener(event, e => {
+    if (!e.target.closest('.case-tile')?.contains(e.relatedTarget)) clearTimeout(intentTimer);
+  });
+  ctx.onClose(() => { clearTimeout(intentTimer); coverObserver?.disconnect(); });
   const render = (kind) => {
+    clearTimeout(intentTimer);
+    coverObserver?.disconnect();
     const order = (id) => id === 'beijing-snow' ? -1 : Number(id === 'bohai22');
     const ordered = [...catalog].sort((a, b) => order(a.id) - order(b.id));
     $('#case-list').innerHTML = ordered
@@ -93,10 +140,17 @@ export function showCases({ main, ctx, catalog }) {
       )
       .join('');
     const cv = $('#belts-cover');
-    if (cv)
-      void resource('/assets/cases/belts/climate-6.json').then((g) => {
-        if (ctx.active) void drawMap(cv, g, { cities: false, bbox: [-177, -67, 177, 70] });
-      });
+    if (cv) {
+      const observer = new IntersectionObserver(entries => {
+        if (!entries.some(e => e.isIntersecting)) return;
+        observer.disconnect();
+        void resource('/assets/cases/belts/climate-6.json').then(g => {
+          if (ctx.active && cv.isConnected) return drawMap(cv, g, { cities: false, bbox: [-177, -67, 177, 70] });
+        }).catch(() => {});
+      }, {root: main, rootMargin: '100px'});
+      coverObserver = observer;
+      observer.observe(cv);
+    }
   };
   $('.case-filter').onclick = (e) => {
     if (e.target.tagName !== 'BUTTON') return;
@@ -117,7 +171,7 @@ function panelHtml(index, available) {
   const choices = available ? options(available) : Object.entries(liveGroups)
     .map(([name, keys]) => `<optgroup label="${name}">${options(keys)}</optgroup>`).join('');
   const name = '第' + (index + 1) + '图';
-  return `<section class="map-panel" aria-label="${name}"><div class="map-panel-head"><label><span class="sr">${name}图层</span><select class="layer-select">${choices}</select></label><span class="kind"></span></div><div class="map-body" tabindex="0" role="group" aria-label="${name}天气图，点选或方向键读取位置，Shift 加方向键平移"><canvas class="current" aria-hidden="true"></canvas><canvas aria-hidden="true"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
+  return `<section class="map-panel no-frame" aria-label="${name}"><div class="map-panel-head"><label><span class="sr">${name}图层</span><select class="layer-select">${choices}</select></label><span class="kind"></span></div><div class="map-body" tabindex="0" role="group" aria-label="${name}天气图，点选或方向键读取位置，Shift 加方向键平移"><canvas class="current" aria-hidden="true"></canvas><canvas aria-hidden="true"></canvas><div class="map-message"></div></div><div class="map-footer"><span class="map-source"></span><span class="color-scale"></span></div><div class="point-read"></div></section>`;
 }
 const guides = {
   wind850: '850 hPa 风场显示低层气流。沿箭头向上游回看，可以追踪空气来自哪里。',
@@ -149,7 +203,15 @@ export async function showMaps({ main, ctx, place, params }, c) {
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
   const requestedTime = Date.parse(params.get('time'));
   if (c && !c.climate && Number.isFinite(requestedTime)) index = nearestFrame(frames, requestedTime);
-  let run,
+  const cycle = c ? null : forecastRun().then(value => ({value}), error => ({error}));
+  if (c) {
+    // Begin the real first archived field before laying out controls or text.
+    const firstLayer = layers[0];
+    void caseFrame(c, firstLayer, frames[index]).then(data => {
+      if (ctx.active && layers[0] === firstLayer) return prepareMapData(data, {zonal:firstLayer === 'zonal'});
+    }).catch(() => {});
+  }
+  let run, cycleError,
     revision = 0,
     playing = false,
     autoStart = !params.has('time') && !matchMedia('(prefers-reduced-motion: reduce)').matches,
@@ -167,10 +229,13 @@ export async function showMaps({ main, ctx, place, params }, c) {
   let quickVisible = false, nextPreviewAt = 0, frameLoad = null;
   let shownTime = null, loadingTimer = 0;
   const originalBox = c?.climate ? [-180, -90, 180, 90] : nationalView;
-  let bbox = [...originalBox], items = {}, forecast = null;
+  let bbox = [...originalBox], items = {}, forecast = null, requestedComparison = false;
   let viewRevision = 0, redrawFrame = 0;
+  void loadLand().catch(() => {});
   const panels = [];
+  const baseJobs = new WeakMap();
   const visibleLayers = () => layers.slice(0, panels.length);
+  const hasObservation = () => visibleLayers().some(layer => ['satellite', 'radar', 'track'].includes(layer));
   function observationSource() {
     const visible = visibleLayers();
     return visible.includes('radar') ? 'radar' : visible.includes('satellite') ? 'satellite' : null;
@@ -212,45 +277,15 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
   }
   setPanels(1);
-  $('.layer-select', grid).disabled = true;
-  if (!c) {
-    try {
-      run = (await get('/api/run', ctx.signal)).run;
-      if (!ctx.active) return;
-      frames = forecastTimes(run);
-      forecastFrames = frames.slice();
-      index = nearestFrame(frames, Number.isFinite(requestedTime) ? requestedTime : Date.now());
-      void get('/api/forecast?id=' + place[0], ctx.signal)
-        .then((d) => {
-          if (ctx.active) {
-            forecast = d;
-            renderReading();
-          }
-        })
-        .catch(() => {});
-    } catch (err) {
-      if (ctx.active) {
-        grid.innerHTML =
-          failBox(err.message) + '<a href="#/cases" class="btn">打开离线案例</a>';
-        $('.retry').onclick = () => location.reload();
-        $('.timeline').hidden = true;
-      }
-      return;
-    }
-  }
-  if (!ctx.active) return;
   const slider = $('#frame-slider');
   const ruler = $('#time-ticks'), preview = $('.time-preview', main);
-  let stops = [], hoverFrame = null;
-  panels.forEach((p) => {
-    $('.layer-select', p).disabled = false;
-  });
+  let stops = [], hoverFrame = null, rulerWidth = 0;
   $('.map-layout', main).onclick = (e) => {
     const btn = e.target.closest('[data-count]');
     if (!btn || panels.length === Number(btn.dataset.count)) return;
     const before = observationSource();
     setPanels(Number(btn.dataset.count));
-    if (observing && before !== observationSource()) void setMode(true);
+    if (observing && before !== observationSource()) void setMode(hasObservation());
     else void refreshView();
   };
   grid.onchange = (e) => {
@@ -258,7 +293,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const i = panels.indexOf(e.target.closest('.map-panel'));
     const before = observationSource();
     layers[i] = e.target.value;
-    if (!c && ((!observing && observationSource()) || (observing && before !== observationSource()))) void setMode(true);
+    if (!c && ((!observing && hasObservation()) || (observing && (before !== observationSource() || !hasObservation()))))
+      void setMode(hasObservation());
     else void refreshView();
   };
   function frameLabel(t) {
@@ -268,13 +304,21 @@ export async function showMaps({ main, ctx, place, params }, c) {
     stops = frameStops(frames);
     hoverFrame = null;
     slider.max = String(stops.at(-1) || 0);
+    slider.disabled = !frames.length;
+    if (!frames.length) {
+      for (const id of ['#play','#prev-frame','#next-frame']) $(id, timeline).disabled = true;
+      preview.textContent = '';
+      ruler.replaceChildren();
+      return;
+    }
     controls(index);
-    drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null);
+    if (rulerWidth) drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null, rulerWidth);
   }
   async function setMode(observe) {
     clearSeekStatus();
     const modeVersion = ++modeRevision;
-    const requested = frames[index], source = observe ? observationSource() : null;
+    const requested = frames[index] ?? (Number.isFinite(requestedTime) ? requestedTime : Date.now());
+    const source = observe ? observationSource() : null;
     if (observe && !observing) {
       const last = Math.floor((Date.now() - 30 * 60000) / (10 * 60000)) * 10 * 60000;
       frames = Array.from({ length: 19 }, (_, i) => last - (18 - i) * 10 * 60000);
@@ -282,7 +326,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       index = timePinned ? frames.indexOf(requested) : frames.length - 1;
     } else if (!observe && observing) {
       frames = forecastFrames;
-      index = nearestFrame(frames, requested);
+      index = frames.length ? nearestFrame(frames, requested) : 0;
     }
     observing = observe;
     for (const el of $$('.mode-tabs button')) {
@@ -313,10 +357,24 @@ export async function showMaps({ main, ctx, place, params }, c) {
     void refreshView();
   }
   updateTicks();
+  let forecastChoice;
   if (!c)
     $('.mode-tabs').onclick = (e) => {
       const btn = e.target.closest('[data-mode]');
-      if (btn) setMode(btn.dataset.mode === 'observation');
+      if (!btn) return;
+      const observe = btn.dataset.mode === 'observation';
+      if (observe && !observing && !hasObservation()) {
+        forecastChoice = layers[0];
+        layers[0] = 'satellite';
+        $('.layer-select', panels[0]).value = layers[0];
+      } else if (!observe && observing && forecastChoice) {
+        if (layers[0] === 'satellite') {
+          layers[0] = forecastChoice;
+          $('.layer-select', panels[0]).value = layers[0];
+        }
+        forecastChoice = null;
+      }
+      void setMode(observe);
     };
   function renderReading() {
     if (!ctx.active) return;
@@ -329,6 +387,12 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     let compare = '';
     const g = Object.values(items).find((o) => o?.layer === 'temp2');
+    if (!c && g && !requestedComparison) {
+      requestedComparison = true;
+      void get('/api/forecast?id=' + place[0], ctx.signal).then(d => {
+        if (ctx.active) { forecast = d; renderReading(); }
+      }).catch(() => {});
+    }
     if (!c && g && forecast) {
       const rows = forecast.daily.flatMap((d) => d.rows),
         row = rows.find((r) => Date.parse(r.time) === Date.parse(g.valid)),
@@ -442,15 +506,27 @@ export async function showMaps({ main, ctx, place, params }, c) {
       panels.forEach((panel, i) => {
         const canvas = $('canvas.current', panel);
         if (items[i]) void drawMap(canvas, items[i], mapOptions(i)).catch(() => {});
+        else showBasemap(panel, i);
       });
       updateRead();
     });
   }
-  const observer = new ResizeObserver(repaint);
+  const plotSize = () => [window.devicePixelRatio, ...panels.map(p => $('.map-body', p).getBoundingClientRect().width)].join(',');
+  let previousSize;
+  const resizePlots = () => {
+    const size = plotSize();
+    const changed = previousSize !== undefined && size !== previousSize;
+    previousSize = size;
+    if (changed) repaint();
+  };
+  const observer = new ResizeObserver(resizePlots);
   observer.observe(grid, { box: 'device-pixel-content-box' });
-  const rulerObserver = new ResizeObserver(() => drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null));
+  const rulerObserver = new ResizeObserver(([entry]) => {
+    rulerWidth = entry.contentRect.width;
+    drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null, rulerWidth);
+  });
   rulerObserver.observe(ruler);
-  window.addEventListener('resize', repaint, { signal: ctx.signal });
+  window.addEventListener('resize', resizePlots, { signal: ctx.signal });
   ctx.onClose(() => {
     discardScrub();
     frameLoad?.abort();
@@ -461,15 +537,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
     revision++;
     stop();
   });
-  function frameUrl(layer, t) {
-    if (c?.climate) return '/assets/cases/belts/climate-' + t + '.json';
+  function frameUrl(layer, t, modelRun = run) {
+    if (c) return caseFrameUrl(c, layer, t);
     const iso = new Date(t).toISOString();
-    if (c) {
-      if (layer === 'satellite') return null;
-      if (layer === 'track') return '/assets/cases/doksuri/track.json';
-      const lead = (t - Date.parse(c.run + 'T00:00:00Z')) / HOUR;
-      return '/assets/cases/' + c.id + '/' + layer + '-' + lead + '.json';
-    }
     if (layer === 'satellite') {
       const reg =
         point[0] >= 115 && point[1] >= 22
@@ -483,24 +553,26 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     if (layer === 'radar') return '/api/radar?time=' + encodeURIComponent(iso);
     if (layer === 'track') return '/api/cyclones';
-    const forecast = forecastFrame(run, t);
+    const forecast = forecastFrame(modelRun, t);
     return forecast ? liveGridUrl(forecast.run, forecast.lead, layer, cursor || point) : null;
   }
   async function dataFor(layer, time, group) {
-    if (c && layer === 'satellite') {
-      const date = new Date(time).toISOString().slice(0,10), folder = '/assets/cases/' + c.id + '/';
-      return { image: folder + 'national-' + date + '.jpg', bbox: archiveBounds,
-        detailImage: folder + date + '.jpg', detailBounds: c.bbox, valid: date,
-        source: 'NASA GIBS · Terra / MODIS', type: '卫星日合成' };
+    if (c) return caseFrame(c, layer, time, group);
+    let modelRun = run;
+    if (!modelRun && !['satellite','radar','track'].includes(layer)) {
+      const result = await cycle;
+      if (result.error) throw result.error;
+      group?.controller.signal.throwIfAborted();
+      modelRun = result.value.run;
     }
-    const url = frameUrl(layer, time);
+    const url = frameUrl(layer, time, modelRun);
     if (!url) throw Error('该观测时刻没有对应的模式预报');
     const data = await resource(url, group);
-    if (layer === 'track') return c ? { ...data, valid: new Date(time).toISOString() }
-      : { ...data, valid: new Date(time).toISOString(), type: '机构路径', source: '香港天文台' };
+    if (layer === 'track') return { ...data, valid: new Date(time).toISOString(), type: '机构路径', source: '香港天文台' };
     return data;
   }
   function previewAt(target) {
+    if (!frames.length) return;
     preview.textContent = frameLabel(frames[target]);
     const percent = stops.at(-1) ? 100 * stops[target] / stops.at(-1) : 0;
     preview.style.setProperty('--time-position', percent + '%');
@@ -566,18 +638,84 @@ export async function showMaps({ main, ctx, place, params }, c) {
     delete $('.color-scale', panel).dataset.key;
     for (const field of $$('.kind, .map-source, .color-scale, .point-read', panel)) field.replaceChildren();
   }
+  function showBasemap(panel, i) {
+    if (layers[i] === 'zonal' || items[i] || !ctx.active) return;
+    const canvas = $('canvas.current', panel), prior = baseJobs.get(panel);
+    if (prior?.canvas === canvas && prior.view === viewRevision) return;
+    const job = {canvas, view:viewRevision};
+    baseJobs.set(panel, job);
+    const pending = () => ctx.active && panel.isConnected && !items[i] &&
+      baseJobs.get(panel) === job && canvas.classList.contains('current');
+    const paint = async () => {
+      if (!pending()) return;
+      const options = {...mapOptions(i), annotation:null};
+      if (!await drawMap(canvas, null, {...options, firstLook:true}) || !pending()) return;
+      panel.classList.add('has-basemap');
+      if (!c) {
+        await yieldToPaint();
+        if (pending()) await drawMap(canvas, null, options);
+      }
+    };
+    const start = () => { void paint().catch(() => { if (baseJobs.get(panel) === job) baseJobs.delete(panel); }); };
+    // Fast local case data usually arrives first. Avoid rendering an extra full-size canvas for it.
+    if (c) setTimeout(start, 65);
+    else start();
+  }
   function showPending(choices, text) {
     for (const [i, panel] of panels.entries()) {
       if (panel.dataset.layer !== choices[i]) {
         clearPanel(panel, i);
+        if (choices[i] === 'zonal') { baseJobs.delete(panel); panel.classList.remove('has-basemap'); }
+        else showBasemap(panel, i);
         const message = $('.map-message', panel);
-        message.className = 'map-message show';
+        message.className = 'map-message pending show';
         message.textContent = text;
       }
     }
   }
+  function publishPanel(i, layer, result, buffer, animate) {
+    const panel = panels[i], msg = $('.map-message', panel);
+    if (result.status === 'rejected') {
+      clearPanel(panel, i);
+      showBasemap(panel, i);
+      msg.innerHTML = `<span>${escape(result.reason?.message || '此时次暂无资料')}</span><button class="btn map-retry">重试</button>`;
+      msg.className = 'map-message show';
+      $('.map-retry', msg).onclick = () => { stop(); void refresh(); };
+      return;
+    }
+    const data = result.value, previous = $('canvas.current', panel);
+    for (const fade of previous.getAnimations()) fade.cancel();
+    previous.classList.remove('current');
+    buffer.classList.add('current');
+    if (animate && items[i] && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const fade = buffer.animate([{opacity:0}, {opacity:1}], {duration:180, easing:'ease-out'});
+      fade.playbackRate = clock.rate;
+    }
+    items[i] = data;
+    panel.dataset.layer = layer;
+    panel.classList.remove('no-frame', 'has-basemap');
+    baseJobs.delete(panel);
+    const empty = layer === 'track' && !data.storms?.length;
+    msg.className = empty ? 'map-message show' : 'map-message';
+    msg.textContent = empty ? '此时次没有已发布的台风路径' : '';
+    describe(panel, layer, data);
+  }
+  function yieldToPaint() {
+    // Let the real field reach the screen before the full-resolution overlays
+    // or the next animation frame occupy the renderer. Hidden windows can settle too.
+    return new Promise(resolve => {
+      const raf = requestAnimationFrame(() => { clearTimeout(fallback); setTimeout(resolve, 0); });
+      const fallback = setTimeout(() => { cancelAnimationFrame(raf); resolve(); }, 100);
+    });
+  }
+  function displayTime(time) {
+    if (shownTime !== time)
+      $('#frame-time').textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
+    shownTime = time;
+    if (time === frames[index]) clearSeekStatus();
+  }
   async function refresh(target = index, { animate = false, hold, preview } = {}) {
-    if (!ctx.active) return;
+    if (!ctx.active || !frames.length) return;
     if (!preview) discardScrub();
     const rev = ++revision, time = frames[target], choices = visibleLayers();
     frameLoad?.abort();
@@ -585,10 +723,50 @@ export async function showMaps({ main, ctx, place, params }, c) {
     frameLoad = group.controller;
     const current = () => ctx.active && rev === revision;
     showPending(choices, '读取图层…');
-    const results = await Promise.allSettled(choices.map(async layer => {
-      const data = await dataFor(layer, time, group);
-      if (animate && current()) await prepareMapData(data);
-      return data;
+    const buffers = panels.map(panel => $('canvas:not(.current)', panel));
+    // Opening or changing layers at one valid time can publish independently.
+    // A time change still swaps all the staging canvases together.
+    const independent = !animate && !preview && (shownTime === null || shownTime === time) &&
+      panels.some((panel,i) => panel.dataset.layer !== choices[i]);
+    async function stage(result, i, quick, buffer = buffers[i], firstLook = false) {
+      if (result.status === 'fulfilled') {
+        baseJobs.delete(panels[i]);
+        try { await drawMap(buffer, result.value, { ...mapOptions(i), quick, firstLook }); }
+        catch (reason) { return {status:'rejected', reason}; }
+      }
+      return result;
+    }
+    const results = await Promise.all(choices.map(async (layer, i) => {
+      let result;
+      try {
+        const value = await dataFor(layer, time, group);
+        if (animate && current()) await prepareMapData(value, {zonal:layer === 'zonal'});
+        result = {status:'fulfilled', value};
+      } catch (reason) { result = {status:'rejected', reason}; }
+      if (independent && current()) {
+        for (const fade of $('canvas.current', panels[i]).getAnimations()) fade.cancel();
+        const firstField = !items[i] && result.status === 'fulfilled' && result.value.values && layer !== 'zonal';
+        let version;
+        do {
+          version = viewRevision;
+          result = await stage(result, i, firstField, buffers[i], firstField);
+        } while (current() && version !== viewRevision);
+        if (current()) {
+          publishPanel(i, layer, result, buffers[i], false);
+          if (result.status === 'fulfilled') { displayTime(time); updateRead(); }
+          if (firstField && result.status === 'fulfilled') {
+            await yieldToPaint();
+            if (!current()) return result;
+            const detailed = $('canvas:not(.current)', panels[i]);
+            do {
+              version = viewRevision;
+              result = await stage(result, i, false, detailed);
+            } while (current() && version !== viewRevision);
+            if (current()) publishPanel(i, layer, result, detailed, false);
+          }
+        }
+      }
+      return result;
     }));
     if (frameLoad === group.controller) frameLoad = null;
     if (!current()) return;
@@ -596,58 +774,29 @@ export async function showMaps({ main, ctx, place, params }, c) {
     // thumb keeps moving. Late network replies and obsolete failures stay off screen.
     if (preview && target !== index &&
         (performance.now() - preview.started > 120 || results.some(r => r.status === 'rejected'))) return;
-    // The staging canvas is still visible beneath a crossfade until that fade
-    // finishes. After that, draw the next frame while its playback clock runs.
-    const fades = panels.flatMap(panel => $('canvas.current', panel).getAnimations());
-    if (animate && fades.length) {
-      await Promise.all(fades.map(fade => fade.finished.catch(() => {})));
-      if (!current()) return;
-    } else {
-      for (const fade of fades) fade.cancel();
-    }
-    // Staging canvases share the visible plot's dimensions. Publish all maps and labels together.
-    const buffers = panels.map(panel => $('canvas:not(.current)', panel));
-    let version, quick;
-    do {
-      version = viewRevision;
-      quick = Boolean(preview && !preview.detail);
-      await Promise.all(results.map(async (result, i) => {
-        if (result.status !== 'fulfilled') return;
-        try { await drawMap(buffers[i], result.value, { ...mapOptions(i), quick }); }
-        catch (reason) { results[i] = { status: 'rejected', reason }; }
-      }));
-      if (!current()) return;
-      if (hold) {
-        await hold;
-        hold = null;
+    let quick = false;
+    if (!independent) {
+      // The previous canvas is visible beneath a crossfade until it finishes.
+      const fades = panels.flatMap(panel => $('canvas.current', panel).getAnimations());
+      if (animate && fades.length) {
+        await Promise.all(fades.map(fade => fade.finished.catch(() => {})));
         if (!current()) return;
+      } else {
+        for (const fade of fades) fade.cancel();
       }
-    } while (version !== viewRevision || (quick && preview.detail));
-    for (const [i, panel] of panels.entries()) {
-      const msg = $('.map-message', panel), result = results[i];
-      if (result.status === 'rejected') {
-        clearPanel(panel, i);
-        msg.innerHTML = `<span>${escape(result.reason?.message || '此时次暂无资料')}</span><button class="btn map-retry">重试</button>`;
-        msg.className = 'map-message show';
-        $('.map-retry', msg).onclick = () => { stop(); void refresh(); };
-        continue;
-      }
-      const data = result.value, layer = choices[i];
-      const previous = $('canvas.current', panel);
-      for (const anim of previous.getAnimations()) anim.cancel();
-      previous.classList.remove('current');
-      buffers[i].classList.add('current');
-      if (animate && items[i] && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-        const fade = buffers[i].animate([{ opacity: 0 }, { opacity: 1 }], { duration: 180, easing: 'ease-out' });
-        fade.playbackRate = clock.rate;
-      }
-      items[i] = data;
-      panel.dataset.layer = layer;
-      panel.classList.remove('no-frame');
-      const empty = layer === 'track' && !data.storms?.length;
-      msg.className = empty ? 'map-message show' : 'map-message';
-      msg.textContent = empty ? '此时次没有已发布的台风路径' : '';
-      describe(panel, layer, data);
+      let version;
+      do {
+        version = viewRevision;
+        quick = Boolean(preview && !preview.detail);
+        await Promise.all(results.map(async (result, i) => { results[i] = await stage(result, i, quick); }));
+        if (!current()) return;
+        if (hold) {
+          await hold;
+          hold = null;
+          if (!current()) return;
+        }
+      } while (version !== viewRevision || (quick && preview.detail));
+      results.forEach((result,i) => publishPanel(i, choices[i], result, buffers[i], animate));
     }
     quickVisible = quick;
     if (!preview) {
@@ -656,14 +805,22 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     const canZoom = panels.some((panel, i) => !items[i]?.externalImage && layers[i] !== 'zonal');
     for (const btn of $$('.zoom button', main)) btn.disabled = !canZoom;
-    shownTime = time;
-    if (time === frames[index]) clearSeekStatus();
-    $('#frame-time').textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
+    displayTime(time);
     updateRead();
     if (!c) renderReading();
     return results.some(result => result.status === 'fulfilled');
   }
   async function refreshView() {
+    if (!frames.length) {
+      showPending(visibleLayers(), '读取预报时次…');
+      if (cycleError) {
+        const message = $('.map-message', panels[0]);
+        message.className = 'map-message show';
+        message.innerHTML = '<span>' + escape(cycleError.message) + '</span><button class="btn retry">重试</button><a href="#/cases" class="btn">打开离线案例</a>';
+        $('.retry', message).onclick = () => location.reload();
+      }
+      return;
+    }
     const resume = playing || autoStart, seq = ++playSession;
     clock.cancel();
     const hasData = await refresh();
@@ -926,12 +1083,29 @@ export async function showMaps({ main, ctx, place, params }, c) {
     readPoint();
   };
 
-  renderReading();
+  if (!c) {
+    showPending(visibleLayers(), '读取预报时次…');
+    const outcome = await cycle;
+    if (!ctx.active) return;
+    if (outcome.error) {
+      cycleError = outcome.error;
+      if (!observing) { await refreshView(); renderReading(); }
+      return;
+    }
+    run = outcome.value.run;
+    forecastFrames = forecastTimes(run);
+    if (!observing) {
+      frames = forecastFrames;
+      index = nearestFrame(frames, Number.isFinite(requestedTime) ? requestedTime : Date.now());
+      updateTicks();
+    }
+    if (observing) return;
+  }
   const initialFrame = refreshView();
   if (c && ['bohai', 'bohai22'].includes(c.id)) {
     localArchive = await resource('/assets/cases/' + c.id + '/local.json');
     if (!ctx.active) return;
-    renderReading();
   }
   await initialFrame;
+  if (c && ctx.active) renderReading();
 }

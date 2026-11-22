@@ -3,7 +3,7 @@ const test = require('node:test'),
   assert = require('node:assert/strict');
 const { sources, fieldError, parseIndex } = require('../server/grid-sources.cjs');
 const { resolveLiveGrid } = require('../server/live-grids.cjs');
-const { findRun } = require('../server/grids.cjs');
+const { findRun, firstGfsIndex } = require('../server/grids.cjs');
 const run = '2026-11-20T00:00:00.000Z',
   lead = 24,
   valid = '2026-11-21T00:00:00.000Z';
@@ -12,6 +12,39 @@ const providers = [
   sources.find((s) => s.id === 'ifs'),
   sources.find((s) => s.id === 'gefs'),
 ];
+test('快主镜像只查一次目录，慢镜像不阻塞已有的同批次目录', async () => {
+  const peers = [sources[0], sources.find(s => s.id === 'gfs-google')];
+  const seen = [];
+  const fast = await firstGfsIndex(peers, async p => { seen.push(p.id); }, 5);
+  assert.equal(fast.winner, peers[0]);
+  await new Promise(r => setTimeout(r, 12));
+  assert.deepEqual(seen, ['gfs']);
+  let release;
+  const stalled = new Promise(resolve => { release = resolve; });
+  const raced = await firstGfsIndex(peers, p => p === peers[0] ? stalled : Promise.resolve(), 2);
+  try { assert.equal(raced.winner, peers[1]); } finally { release(); }
+  const failed = await firstGfsIndex(peers, async () => { throw fieldError('尚未发布'); }, 2);
+  assert.equal(failed.winner, null);
+  assert.deepEqual([...failed.errors.keys()], peers.map(p => p.id));
+});
+test('预取的低地候选不可覆盖高原实测地面气压所选的层', async () => {
+  let pressure, predicted;
+  const ground = new Promise(resolve => { pressure = resolve; });
+  const warmed = new Promise(resolve => { predicted = resolve; });
+  const requested = [];
+  const result = resolveLiveGrid(run, lead, 'autoTransport', 0, { providers: [sources[0]],
+    read: async (source, cycle, hour, layer) => {
+      requested.push(layer);
+      if (layer === 'surfacePressure') await ground;
+      if (layer === 'wind850') predicted();
+      return {sourceId:source.id, source:source.name, layer, run:cycle, valid, nx:1, ny:1,
+        bbox:[100,30,100,30], step:1, values:[layer === 'surfacePressure' ? 585 : 3], v:[4], terrainMask:[0]};
+    } });
+  await warmed;
+  pressure();
+  assert.equal((await result).layer, 'wind500');
+  assert.equal(requested.filter(l => l === 'wind850').length, 1);
+});
 const ps = { values: [1000, 600] },
   wind = { values: [3, 8], v: [4, 6], terrainMask: [0, 0] },
   height = { values: [5620, 5700], terrainMask: [0, 0] };

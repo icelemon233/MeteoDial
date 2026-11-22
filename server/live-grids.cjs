@@ -1,6 +1,6 @@
 'use strict';
-const { sources, hourlySources, fields, fieldError } = require('./grid-sources.cjs');
-const { readLiveGrid } = require('./grids.cjs');
+const { fields, fieldError } = require('./grid-sources.cjs');
+const { readLiveGrid, liveProviderOrder } = require('./grids.cjs');
 const { automaticLayers, levelChoices, suitable, validPressure } = require('../shared/levels.mjs');
 
 function hasValue(grid, index) {
@@ -65,7 +65,7 @@ async function resolveLiveGrid(
   lead,
   choice,
   cell = null,
-  { providers = lead % 3 ? hourlySources : sources, read = readLiveGrid } = {},
+  { providers, read = readLiveGrid } = {},
 ) {
   const auto = Object.hasOwn(automaticLayers, choice);
   if (!auto && !Object.hasOwn(fields, choice))
@@ -73,6 +73,7 @@ async function resolveLiveGrid(
   if (auto && (cell === null || cell < 0))
     throw Object.assign(Error('请在东亚模式覆盖范围内选点'), { statusCode: 422 });
   const point = cell === null || cell < 0 ? null : cell;
+  providers ??= await liveProviderOrder(run, lead, choice);
   const available = lead % 3 === 0 ? providers : providers.filter(source => source.model === 'gfs');
   const memo = new Map();
   const runTime = new Date(run).getTime(),
@@ -108,6 +109,14 @@ async function resolveLiveGrid(
     surfaceOffline = false;
   if (auto || fields[choice]?.[0][1].endsWith(' mb')) {
     for (const provider of available) {
+      let prefetch;
+      if (provider === available[0] && provider.model === 'gfs') {
+        const predicted = auto ? levelChoices(choice, 1013)[0] : choice;
+        // Warm at most one field during a cold pressure read. Selection below
+        // always uses this point's actual surface pressure and terrain mask.
+        if (auto) prefetch = setTimeout(() => { void get(provider, predicted).catch(() => {}); }, 100);
+        else void get(provider, predicted).catch(() => {});
+      }
       try {
         const grid = await get(provider, 'surfacePressure');
         if (!firstSurface && grid.values.some(validPressure)) firstSurface = grid;
@@ -118,7 +127,7 @@ async function resolveLiveGrid(
       } catch (error) {
         if (error.code !== 'FIELD_MISSING' && ![404, 410].includes(error.statusCode))
           surfaceOffline = true;
-      }
+      } finally { clearTimeout(prefetch); }
     }
   }
   const ps = point === null ? null : (reference?.values[point] ?? null);

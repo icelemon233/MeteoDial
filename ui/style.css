@@ -662,6 +662,9 @@ main > * {
 .no-frame canvas {
   visibility: hidden;
 }
+.no-frame.has-basemap canvas.current {
+  visibility: visible;
+}
 .original-image .map-body {
   cursor: default;
   touch-action: auto;
@@ -683,6 +686,14 @@ main > * {
 .map-message.show {
   display: flex;
   flex-direction: column;
+}
+.map-message.pending.show {
+  inset: 10px auto auto 10px;
+  padding: 5px 9px;
+  border-radius: 5px;
+  background: rgba(25, 43, 57, .9);
+  color: #f1f5f6;
+  pointer-events: none;
 }
 .map-footer {
   min-height: 34px;

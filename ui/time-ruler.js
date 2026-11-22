@@ -24,8 +24,7 @@ function candidates(frames, width, seasonal) {
   return [...indexes];
 }
 
-export function drawTimeRuler(element, frames, stops, seasonNames) {
-  const width = element.clientWidth;
+export function drawTimeRuler(element, frames, stops, seasonNames, width = element.clientWidth) {
   if (!frames.length || !width) return;
   const end = frames.length - 1, span = frames[end] - frames[0];
   const position = (i) => stops[end] ? stops[i] / stops[end] : 0;

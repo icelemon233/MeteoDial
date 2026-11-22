@@ -5,6 +5,7 @@ const { pressureLevels, heightLevels } = require('../shared/levels.mjs');
 const googleGfs = { id: 'gfs-google', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · Google Cloud', resolution: '1p00' };
 const sources = [
   { id: 'gfs', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · AWS', resolution: '1p00' },
+  googleGfs,
   { id: 'nomads', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA NOMADS', resolution: '1p00' },
   {
     id: 'ifs',
@@ -28,7 +29,7 @@ const sources = [
     resolution: '0p50',
   },
 ];
-const hourlySources = [googleGfs, ...sources.filter(source => source.model === 'gfs')];
+const hourlySources = [googleGfs, ...sources.filter(source => source.model === 'gfs' && source !== googleGfs)];
 const fields = {
   wind10: [
     ['UGRD', '10 m above ground'],
@@ -233,8 +234,8 @@ async function selectEntries(source, run, lead, resolution, specs) {
   if (absent >= 0) throw fieldError(source.name + ' 此时次未发布 ' + specs[absent].join(' / '));
   return selected;
 }
-async function published(source, run, lead) {
-  const rows = await indexFor(source, run, lead, gribAddress(source, run, lead));
+async function published(source, run, lead, resolution = source.resolution) {
+  const rows = await indexFor(source, run, lead, gribAddress(source, run, lead, resolution));
   if (!rows.some((r) => ['PRES', 'UGRD', 'TMP', 'HGT'].includes(r.field)))
     throw fieldError('该文件暂无预报字段');
 }

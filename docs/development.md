@@ -26,6 +26,10 @@ The Beijing snowfall includes all 28 hourly outputs from the 2023-12-10 00 UTC G
 
 The historical grids and national MODIS images share the extent in `assets/data/archive-domain.json`. Dated local MODIS images retain their original bounds for close-up views and covers. To rebuild the offline basemap, install pyshp and Shapely 2 or later and run `python scripts/prepare-boundaries.py`. It uses the pinned NMC boundary linework and the Natural Earth 1:50m land and coastline files. The separate coastline layer keeps polygon edges at the date line and poles out of the visible shorelines.
 
+The desktop renderer reads the three boundary layers from `basemap-v1.bin`, which the same script generates with the original coordinates at four decimal places and each line's bounds. The case viewer loads regional MODIS detail when the view intersects its footprint at close range. On a new multi-panel layout, fields for one valid time can appear as they arrive. Playback and scrubbing still publish all panels together.
+
+On a cold GFS lookup, a slow inventory request can overlap a second small index from another mirror of the same product. The chosen mirror supplies its own offsets and GRIB ranges. A dedicated Node worker verifies and decodes the GRIB messages while the local HTTP service continues serving the interface and case files.
+
 ## Project layout
 
 | Path | Contents |

@@ -9,7 +9,7 @@ const defaults = {
   recent: [],
   place: '',
   playbackRate: 1,
-  version: '0.4.2',
+  version: '0.4.3',
 };
 function saved(key, fallback) {
   try {

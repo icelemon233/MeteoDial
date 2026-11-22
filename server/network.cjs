@@ -47,12 +47,20 @@ async function request(url, options = {}) {
   }
   return res;
 }
-async function cached(key, ttl, loader, { stale = 0 } = {}) {
-  if (inflight.has(key)) return inflight.get(key);
-  const target = path.join(
+function cacheFile(key) {
+  return path.join(
     directory,
     crypto.createHash('sha256').update(key).digest('hex') + '.json',
   );
+}
+// A hint for choosing a replica; cached() still validates expiry and reads the record.
+async function cachePresent(key) {
+  if (!directory) return false;
+  try { await fs.access(cacheFile(key)); return true; } catch { return false; }
+}
+async function cached(key, ttl, loader, { stale = 0 } = {}) {
+  if (inflight.has(key)) return inflight.get(key);
+  const target = cacheFile(key);
   const task = (async () => {
     let old;
     try {
@@ -113,4 +121,4 @@ async function pruneCache(keepBytes = 180 * 1024 * 1024) {
       await fs.unlink(e.file).catch(() => {});
   }
 }
-module.exports = { configureCache, configureTransport, cached, request, pruneCache };
+module.exports = { configureCache, configureTransport, cached, cachePresent, request, pruneCache };

@@ -14,7 +14,7 @@ import {
   safeLink,
 } from './base.js';
 import { showForecast } from './forecast.js';
-import { showMaps, showCases } from './viewer.js';
+import { showMaps, showCases, prepareLiveMap } from './viewer.js';
 import { showDisasters } from './disasters.js';
 const main = $('#content');
 const nav = [
@@ -39,6 +39,20 @@ await migrateLocation(byId);
 let place = byId.get(prefs.place) || byId.get('371002'),
   ctx, locationMatch;
 let recent = prefs.recent.filter((id) => byId.has(id)).slice(0, 5);
+let mapIntentTimer;
+function mapLinkIntent(event) {
+  const link = event.target.closest?.('a[href^="#/maps"]');
+  if (!link || link.contains(event.relatedTarget) || location.hash.startsWith('#/maps')) return;
+  clearTimeout(mapIntentTimer);
+  if (event.type === 'pointerout' || event.type === 'focusout') return;
+  mapIntentTimer = setTimeout(() => {
+    if (!link.isConnected || location.hash.startsWith('#/maps')) return;
+    const time = Date.parse(new URLSearchParams(link.hash.split('?')[1]).get('time'));
+    void prepareLiveMap(place, Number.isFinite(time) ? time : null).catch(() => {});
+  }, event.type === 'focusin' ? 0 : 100);
+}
+for (const event of ['pointerover','pointerout','focusin','focusout'])
+  document.addEventListener(event, mapLinkIntent);
 function selectPlace(id, match = null) {
   if (!byId.has(id)) return;
   locationMatch = match;
