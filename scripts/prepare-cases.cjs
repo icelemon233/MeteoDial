@@ -95,9 +95,10 @@ async function prepare(c) {
     return;
   }
   const run = c.run + 'T00:00:00Z';
-  const resolution = c.resolution || '1p00', step = c.step || 1;
+  const step = c.step || 1;
   const jobs = [];
   for (const lead of c.leads) {
+    const resolution = lead % 3 ? '0p25' : (c.resolution || '1p00');
     for (const layer of c.layers.filter((l) => c.dataMode !== 'reanalysis' && !['track', 'satellite'].includes(l))) {
       jobs.push(() =>
         writeIfMissing(

@@ -6,13 +6,15 @@ import {
   escape,
   validText,
   clockTime,
-  dateText,
+  isoDay,
   HOUR,
   fmtNum,
   windDir,
   layerNames,
   layerUnit,
   safeLink,
+  openDialog,
+  closeButton,
 } from './base.js';
 import { drawMap, geoFromPointer, sample, legend, extentFor, nationalView, clampView, panView, prepareMapData, loadLand } from './cartography.js';
 import { automaticLayers, pressureLevels, liveGridUrl, sourceName, actualLevel, forecastRun } from './levels.js';
@@ -23,6 +25,8 @@ import { bindPreferenceSelect } from './shell.js';
 import { playbackClock } from './playback-clock.js';
 import { playbackBuffer } from './playback-buffer.js';
 import { cmaProducts, cmaDefaults, reflectLayer, cmaGuide, sharedObservationTimes } from './cma-maps.js';
+import { markEventTime } from './disaster-analysis.js';
+import { showGaugeReference } from './gauge-reference.js';
 const memo = new Map();
 function cachedResource(url) {
   const hit = memo.get(url);
@@ -62,14 +66,25 @@ const liveGroups = {
   '中央气象台': ['cmaRadar','cmaChart','cmaSatellite'],
   '观测': ['satellite', 'radar', 'track'],
 };
-function caseDate(c) {
-  return c.period || c.run.replaceAll('-', '.');
+function caseDate(c, frames) {
+  if (!frames.length) return c.period || c.run.replaceAll('-', '.');
+  const first = frames[0], last = frames.at(-1);
+  const start = isoDay(first), end = isoDay(last);
+  const from = start.replaceAll('-', '.') + ' ' + clockTime(first);
+  if (frames.length === 1) return from;
+  const sameYear = start.slice(0, 4) === end.slice(0, 4);
+  const endDate = (sameYear ? end.slice(5) : end).replaceAll('-', '.');
+  const to = start === end ? clockTime(last) : endDate + ' ' + clockTime(last);
+  const steps = new Set(frames.slice(1).map((t, i) => (t - frames[i]) / HOUR));
+  const step = steps.size === 1 ? '每 ' + [...steps][0] : Math.min(...steps) + '–' + Math.max(...steps);
+  return from + ' — ' + to + ' · ' + step + ' 小时';
 }
 function timesFor(c) {
+  if (c.atlas) return Array.from({length:c.atlas.count},(_,i)=>Date.parse(c.atlas.start)+i*c.atlas.cadence*HOUR);
   return c.leads.map(n=>Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
 function caseFrameUrl(c, layer, time) {
-  if (c.daily) return '/assets/cases/disasters/'+c.id+'.json.gz';
+  if (c.atlas) return '/local/disaster-field?'+new URLSearchParams({id:c.id,layer,time:new Date(time).toISOString()});
   const folder = '/assets/cases/' + c.id + '/';
   if (layer === 'satellite') return null;
   if (layer === 'track') return folder + 'track.json';
@@ -77,9 +92,9 @@ function caseFrameUrl(c, layer, time) {
   return folder + layer + '-' + lead + '.json';
 }
 async function caseFrame(c, layer, time, group) {
-  if (c.daily) {
-    const field=c.daily.frames[new Date(time).toISOString().slice(0,10)]?.[layer];
-    if (!field || Date.parse(field.valid)!==time) throw Error('此时次没有对应的历史格点');
+  if (c.atlas) {
+    const field=await resource(caseFrameUrl(c,layer,time),group);
+    if (field.layer!==layer || Date.parse(field.valid)!==time) throw Error('历史格点与所选时次或图层不符');
     return field;
   }
   if (layer === 'satellite') {
@@ -142,8 +157,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
   const chosenPanels=new Set();
   let frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
-  if (c?.daily) index=c.daily.dates.indexOf(c.daily.focus);
-  const requestedTime = Date.parse(params.get('time'));
+  if (c?.atlas) index=nearestFrame(frames,Date.parse(c.atlas.focus));
+  const timeParam=params.get('time');
+  const requestedTime = Date.parse(c?.atlas && /^\d{4}-\d\d-\d\d$/.test(timeParam)?timeParam+'T00:00:00+08:00':timeParam);
   if (c && Number.isFinite(requestedTime)) index = nearestFrame(frames, requestedTime);
   const cycle = c ? null : forecastRun().then(value => ({value}), error => ({error}));
   if (c) {
@@ -189,13 +205,42 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   const sections=c?.sections ? '<nav class="event-sections" aria-label="事件分析视角">'+c.sections.map(s=>'<a href="'+escape(s.href)+'"'+(s.active?' aria-current="page"':'')+'>'+escape(s.label)+'</a>').join('')+'</nav>' : '';
   const layouts = [[1, '单图'], [2, '双图'], [4, '四图']];
-  main.innerHTML = `${sections}<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
+  main.innerHTML = `${sections}<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c, frames)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
     <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原全国地图范围">${icon('focus', 15)}</button></div></div>
     <div class="map-grid" data-count="1"></div>
     <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button><select id="playback-rate" aria-label="播放速度" title="播放速度">${playbackRates.map(rate => '<option value="' + rate + '">' + rate + '×</option>').join('')}</select></div>
     <div id="reading"></div>`;
   const grid = $('.map-grid', main);
   const frameTime = $('#frame-time', main);
+  if (c) {
+    const pick=document.createElement('button');
+    pick.className='btn pick-frame';pick.innerHTML=icon('calendar',15)+'选时次';
+    frameTime.after(pick);
+    pick.onclick=()=>{
+      pauseAtCurrent();
+      const day=t=>new Date(t+8*HOUR).toISOString().slice(0,10);
+      const initial=frames[index];
+      openDialog('<div class="modal-head"><h2>选择回放时次</h2>'+closeButton()+'</div>'+
+        '<form class="choose-frame"><label>日期<input type="date" required value="'+day(initial)+'" min="'+day(frames[0])+
+        '" max="'+day(frames.at(-1))+'"></label><label>时刻（北京时）<select></select></label><button type="submit" class="btn">转到该时次</button></form>',dialog=>{
+        const form=$('.choose-frame',dialog),date=$('input',form),clock=$('select',form),submit=$('[type=submit]',form);
+        function hours(){
+          const previous=clock.selectedOptions[0]?.textContent||clockTime(initial);
+          const options=frames.map((t,i)=>({t,i})).filter(({t})=>day(t)===date.value);
+          clock.replaceChildren(...options.map(({t,i})=>new Option(clockTime(t),String(i))));
+          const preferred=options.find(({t})=>clockTime(t)===previous);
+          if(preferred)clock.value=String(preferred.i);
+          clock.disabled=submit.disabled=!options.length;
+        }
+        hours();date.oninput=hours;
+        form.onsubmit=e=>{
+          e.preventDefault();
+          if(!ctx.active||submit.disabled||!form.reportValidity())return;
+          seek(Number(clock.value),false);dialog.close();
+        };
+      });
+    };
+  }
   let refreshTimes;
   if (!c) {
     refreshTimes=document.createElement('button');
@@ -206,6 +251,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     $('.zoom',main).before(refreshTimes);
   }
   const timeline = $('.timeline', main);
+  timeline.classList.toggle('case-timeline', Boolean(c));
   const speed = $('#playback-rate', timeline);
   bindPreferenceSelect(speed, 'playbackRate', { parse: Number, onValue(rate) {
     clock.setRate(rate);
@@ -236,7 +282,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       btn.setAttribute('aria-pressed', String(selected));
     }
   }
-  setPanels(c?.daily ? 4 : 1);
+  setPanels(c?.atlas ? 4 : 1);
   const slider = $('#frame-slider');
   const ruler = $('#time-ticks'), preview = $('.time-preview', main);
   let stops = [], hoverFrame = null, rulerWidth = 0;
@@ -274,7 +320,6 @@ export async function showMaps({ main, ctx, place, params }, c) {
     else void refreshView();
   };
   function frameLabel(t) {
-    if (c?.daily) return dateText(t, {month:'numeric',day:'numeric'});
     return validText(t);
   }
   function updateTicks() {
@@ -289,7 +334,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       return;
     }
     controls(index);
-    if (rulerWidth) drawTimeRuler(ruler, frames, stops, rulerWidth, Boolean(c?.daily));
+    if (rulerWidth) drawTimeRuler(ruler, frames, stops, rulerWidth);
   }
   async function setMode(observe,latest=false) {
     clearSeekStatus();
@@ -431,12 +476,18 @@ export async function showMaps({ main, ctx, place, params }, c) {
       [c.link!==c.report&&c.report?c.link:null,'专题资料'],[c.event?.extraSource,'过程核查资料'],[c.event?.map.source,'时段核查资料'],...(c.dataLinks||[])] : [];
     const seen=new Set();
     const sources=links.filter(([url])=>url&&!seen.has(url)&&seen.add(url)).map(([url,label])=>safeLink(url,label)).join(' ');
-    const evidence=c ? '<div class="case-evidence"><h3>过程与影响</h3><p>'+escape(c.daily?c.outcome:c.event?.fact||c.outcome)+'</p><h3>'+
-      (c.daily?'图上读数':c.dataMode==='reanalysis'?'再分析回看':'当时的预报')+'</h3><p>'+escape(c.forecast)+'</p>'+(c.evidenceCurve||'')+
-      (!c.daily&&c.event&&c.outcome!==c.event.fact?'<p>'+escape(c.outcome)+'</p>':'')+'<details class="event-sources"><summary>资料来源</summary>'+
-      (c.method?'<p>'+escape(c.method)+' 雨量图为 CPC 陆地日累计，原始格距 0.5°，图上按 1° 取样。各地雨量站的日界依资料而定。</p>':'')+sources+'</details></div>' : '';
+    const evidence=c ? '<div class="case-evidence"><h3>过程与影响</h3><p>'+escape(c.atlas?c.outcome:c.event?.fact||c.outcome)+'</p><h3>'+
+      (c.atlas?'图上读数':c.dataMode==='reanalysis'?'再分析回看':'当时的预报')+'</h3><p>'+escape(c.forecast)+'</p>'+(c.evidenceCurve||'')+
+      (c.atlas?'<button type="button" class="textlink gauge-reference">雨量站日累计对照</button>':'')+
+      (!c.atlas&&c.event&&c.outcome!==c.event.fact?'<p>'+escape(c.outcome)+'</p>':'')+'<details class="event-sources"><summary>资料来源</summary>'+
+      (c.method?'<p>'+escape(c.method)+'</p>':'')+sources+'</details></div>' : '';
     el.innerHTML = '<section class="reading panel"><div class="reading-main"><h2>'+icon('book',18)+(c?'怎样读这次过程':'怎样读天气图')+'</h2>'+
-      (c?c.guides:[...new Set(reading)]).map((s,i)=>'<p class="step"><b>'+(i+1)+'</b>'+escape(s)+'</p>').join('')+compare+'</div>'+evidence+'</section>'+(c?.cross?principle(c.cross):'');
+      (c?c.guides:[...new Set(reading)]).map((s,i)=>'<p class="step"><b>'+(i+1)+'</b>'+
+        (c?.atlas&&i===1?'<span class="atmosphere-reading">'+escape(s)+'</span>':escape(s))+'</p>').join('')+compare+'</div>'+evidence+'</section>'+(c?.cross?principle(c.cross):'');
+    if (c?.atlas) {
+      if (shownTime!==null) markEventTime(c,el,shownTime);
+      $('.gauge-reference',el).onclick=()=>{const t=shownTime??frames[index];pauseAtCurrent();showGaugeReference(c,t,ctx);};
+    }
     const auto = Object.values(items).find((g) => g?.autoRole);
     if (!c && visibleLayers().includes('radar'))
       $('.reading-main', el).insertAdjacentHTML('beforeend', safeLink('https://www.nmc.cn/publish/radar/chinaall.html', '中央气象台全国雷达拼图'));
@@ -546,7 +597,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   observer.observe(grid, { box: 'device-pixel-content-box' });
   const rulerObserver = new ResizeObserver(([entry]) => {
     rulerWidth = entry.contentRect.width;
-    drawTimeRuler(ruler, frames, stops, rulerWidth, Boolean(c?.daily));
+    drawTimeRuler(ruler, frames, stops, rulerWidth);
   });
   rulerObserver.observe(ruler);
   window.addEventListener('resize', resizePlots, { signal: ctx.signal });
@@ -634,7 +685,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
       ? '原始观测图像'
       : layer === 'zonal' ? '纬向平均气压，点选纬度' : '天气图，点选或方向键读取位置，Shift 加方向键平移'));
     $('.kind', panel).textContent = data.type || '预报';
-    const valid = data.period || (data.type === '卫星日合成' ? data.valid + ' UTC' : validText(data.valid));
+    const valid = data.intervalStart&&data.intervalEnd ? validText(data.intervalStart)+' — '+validText(data.intervalEnd)
+      : data.period || (data.type === '卫星日合成' ? data.valid + ' UTC' : validText(data.valid));
     const src = $('.map-source', panel);
     const level = data.autoRole ? actualLevel(data, layerNames) + ' · ' : '';
     src.textContent = level + sourceName(data) + ' · ' + valid + (data.type === '卫星日合成' ? ' · 黑区为缺测' : '');
@@ -645,6 +697,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
       data.preferredLayer && data.layer !== data.preferredLayer && '首选层在此点缺少可用值',
       data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
     ].filter(Boolean).join(' · ') : data.source;
+    if (data.sourceRuns) {
+      const runs=[...new Set(data.sourceRuns)].map(t=>validText(t)).join('、');
+      src.title='累计时段 '+valid+'（北京时） · 四份一小时资料的起报时次 '+runs+' · 原始格距 '+data.resolution;
+    }
     const scale = $('.color-scale', panel);
     const terrain = data.terrainMask?.includes(1);
     const scaleKey = data.values && layer !== 'zonal' ? data.layer + (terrain ? '-terrain' : '') : '';
@@ -760,8 +816,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
     });
   }
   function displayTime(time) {
-    if (shownTime !== time)
-      frameTime.textContent = frameLabel(time) + (c?.daily ? '' : ' · 北京时间');
+    if (shownTime !== time) {
+      frameTime.textContent = frameLabel(time) + ' · 北京时间';
+      if(c?.atlas)markEventTime(c,main,time);
+    }
     shownTime = time;
     if (time === frames[index]) clearSeekStatus();
   }
@@ -969,7 +1027,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     scrubFrame = 0;
     if (!ctx.active || !scrubQueued) return;
     if (now < nextPreviewAt) { scheduleScrub(); return; }
-    if (!c?.daily && scrubJob && scrubJob.target !== index &&
+    if (scrubJob && scrubJob.target !== index &&
         !visibleLayers().every(layer => cachedResource(frameUrl(layer, frames[index]))?.ready)) {
       // The outstanding read will schedule the latest selection on completion.
       return;

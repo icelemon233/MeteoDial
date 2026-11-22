@@ -5,13 +5,16 @@ const minute = 60000;
 const day = 1440 * minute;
 const beijingOffset = 480 * minute;
 const labelIntervals = [1, 2, 5, 10, 15, 20, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200];
+const fourHourIntervals = [240, 480, 720, 1440, 2880, 4320, 10080, 20160, 43200];
 
 function candidates(frames, width) {
   const first = frames[0], last = frames.at(-1);
   const gap = last - first > 3 * day ? 48 : 54;
   if (frames.length * gap <= width) return frames.map((_, i) => i);
   const desired = (last - first) / minute / Math.max(1, width / gap);
-  const step = (labelIntervals.find(value => value >= desired) || labelIntervals.at(-1)) * minute;
+  const fourHourly = frames.every((t, i) => !i || t - frames[i - 1] === 240 * minute);
+  const intervals = fourHourly ? fourHourIntervals : labelIntervals;
+  const step = (intervals.find(value => value >= desired) || intervals.at(-1)) * minute;
   const indexes = new Set([0]);
   const start = Math.ceil((first + beijingOffset) / step) * step - beijingOffset;
   for (let time = start; time < last; time += step) {
@@ -24,18 +27,21 @@ function candidates(frames, width) {
   return [...indexes];
 }
 
-export function drawTimeRuler(element, frames, stops, width = element.clientWidth, daily = false) {
+export function drawTimeRuler(element, frames, stops, width = element.clientWidth) {
   if (!frames.length || !width) return;
   const end = frames.length - 1, span = frames[end] - frames[0];
   const position = (i) => stops[end] ? stops[i] / stops[end] : 0;
+  const majorIndexes = new Set(candidates(frames, width));
+  const dates = new Set();
   const textFor = (i) => {
     const time = frames[i];
-    if (daily) return md(time);
+    const localDay = Math.floor((time + beijingOffset) / day);
+    const firstInDay = !dates.has(localDay);
+    dates.add(localDay);
     if (i === 0 || i === end) return validText(time);
-    if (span > 3 * day) return md(time);
+    if (span > 3 * day) return firstInDay ? md(time) : clockTime(time);
     return (time + beijingOffset) % day === 0 ? validText(time) : clockTime(time);
   };
-  const majorIndexes = new Set(candidates(frames, width));
   const labels = [];
   const fragment = document.createDocumentFragment();
   let previousMark = -Infinity;
@@ -60,8 +66,8 @@ export function drawTimeRuler(element, frames, stops, width = element.clientWidt
   if (labels.length < 2) return;
   const first = labels[0].label, last = labels.at(-1).label;
   if (first.getBoundingClientRect().right + 8 > last.getBoundingClientRect().left) {
-    first.textContent = daily ? md(frames[0]) : clockTime(frames[0]);
-    last.textContent = daily ? md(frames[end]) : clockTime(frames[end]);
+    first.textContent = span>=day ? md(frames[0]) : clockTime(frames[0]);
+    last.textContent = span>=day ? md(frames[end]) : clockTime(frames[end]);
   }
   // Measure the displayed glyphs, including tabular digits and Windows font fallback.
   const rects = labels.map(({label}) => label.getBoundingClientRect());

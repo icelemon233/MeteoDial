@@ -164,6 +164,7 @@ export const layerNames = {
   pressure: '海平面气压',
   moisture700: '700 hPa 相对湿度',
   rainDay: '日累计降水',
+  rain4h: '过去 4 小时累计降水',
   satellite: '卫星云图',
   radar: '区域雷达 · 台湾近海',
   cmaRadar: '雷达回波原图',
@@ -182,6 +183,7 @@ export const layerUnit = {
   pressure: 'hPa',
   moisture700: '%',
   rainDay: 'mm',
+  rain4h: 'mm',
   climate: 'hPa',
   zonal: 'hPa',
 };

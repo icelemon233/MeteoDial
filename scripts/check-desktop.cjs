@@ -78,13 +78,13 @@ async function checkDesktop() {
     const floodSlider = window.locator('#frame-slider');
     await floodSlider.press('Home');
     await window.locator('#next-frame').click();
-    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('7/19 08:00'));
-    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 08:00');
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('7/19 00:00'));
+    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 00:00');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
-    assert.equal(await window.locator('.time-mark').count(), 31);
+    assert.equal(await window.locator('.time-mark').count(), 37);
     const speed = window.getByRole('combobox', {name:'播放速度'});
     await speed.selectOption('2');
-    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 08:00');
+    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 00:00');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
     await window.locator('#play').click();
     await window.waitForFunction(() => document.querySelector('#frame-slider').value === '25');

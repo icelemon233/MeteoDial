@@ -99,9 +99,14 @@ const palettes = {
     [0,[31,52,71]], [1,[65,113,134]], [10,[72,164,156]], [25,[145,190,127]],
     [50,[222,173,99]], [100,[196,102,98]], [250,[144,75,143]],
   ],
+  rain4h: [
+    [0,[31,52,71]], [1,[60,118,142]], [5,[67,156,157]], [10,[139,186,131]],
+    [25,[221,179,105]], [50,[204,117,98]], [100,[150,77,141]],
+  ],
 };
 function palette(layer) {
   if (layer === 'rainDay') return palettes.rainDay;
+  if (layer === 'rain4h') return palettes.rain4h;
   if (layer === 'height400' || layer === 'height300') {
     const offset = layer === 'height400' ? 1650 : 3650;
     return palettes.height.map(([value, rgb]) => [value + offset, rgb]);

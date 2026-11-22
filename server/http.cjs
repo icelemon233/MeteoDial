@@ -13,6 +13,7 @@ const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sk
 const { productTimes, productImage } = require('./cma-products.cjs');
 const { warnings } = require('./cma-warnings.cjs');
 const { cityWeather } = require('./cma-city.cjs');
+const { disasterField } = require('./disaster-atlas.cjs');
 const ROOT = path.join(__dirname, '..');
 const mime = {
   '.html': 'text/html; charset=utf-8',
@@ -211,6 +212,13 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
       );
       const url = new URL(req.url, 'http://' + host);
+      if (url.pathname==='/local/disaster-field') {
+        const q=url.searchParams;
+        const field=await disasterField(q.get('id'),q.get('layer'),q.get('time'));
+        if (res.destroyed) return;
+        res.writeHead(200,{'Content-Type':mime['.json'],'Cache-Control':'private, max-age=3600'});
+        return res.end(JSON.stringify(field));
+      }
       if (localMatch) {
         if (
           req.headers.origin !== url.origin ||
@@ -263,7 +271,7 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         res.writeHead(404);
         return res.end();
       }
-      const compressed = /^assets\/cases\/disasters\/[\w-]+\.json\.gz$/.test(rel);
+      const compressed = /^assets\/cases\/(?:disasters|gauge-days)\/[\w-]+\.json\.gz$/.test(rel);
       const ext = compressed ? '.json' : path.extname(rel);
       if (!mime[ext]) {
         res.writeHead(404);

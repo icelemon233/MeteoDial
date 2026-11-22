@@ -15,7 +15,7 @@ Press **Ctrl K** to search 3,641 cities, counties and districts by name or pinyi
 
 **天气图** (Weather maps) opens with a 16:9 map of China. Switch to two or four panels to compare upper-air patterns, lower-level transport and near-surface wind at the same valid time. Forecasts advance hourly through day five and every three hours through day ten. The speed selector at the right of the timeline remembers your choice from 0.25× to 4×. Drag to pause and preview the map, release for full detail, or use the arrow keys to step through individual frames. At three-hourly slots, ECMWF IFS and the NOAA GEFS control forecast can fill a missing GFS field at the same initialization and valid time. Each panel identifies its field and source. Gray cells mark a pressure surface at or below model terrain.
 
-**重大灾害分析** (Major disaster analysis) covers 352 events in China since 2001. Each event opens an offline map timeline with gridded weather fields, a local time series and the original report. Selected events have additional replays, including the 2008 ice storms and the 2021 Henan floods.
+**重大灾害分析** (Major disaster analysis) covers 352 events in China since 2001. The offline national replay advances in continuous four-hour steps on Beijing time. Select a date and hour to compare the fields and the four-hour model precipitation ending at that time. The reference-point chart and the description of local atmospheric conditions follow the displayed frame. A separate map shows daily gauge-based precipitation. The 2021 Henan flood chapter also has hourly forecasts around the peak.
 
 ## Run from source
 
