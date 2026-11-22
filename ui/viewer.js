@@ -60,28 +60,14 @@ const liveGroups = {
   '定压湿度': pressureLevels.map((p) => 'moisture' + p),
   '观测': ['satellite', 'radar', 'track'],
 };
-const seasons = ['冬季（12–2月）', '春季（3–5月）', '夏季（6–8月）', '秋季（9–11月）'];
-const categories = {
-  bohai: '海洋天气',
-  bohai22: '海洋天气',
-  'beijing-snow': '锋面与地形',
-  'ice-2008': '锋面与地形', 'cold-2016': '大尺度环流', 'henan-2021': '锋面与地形',
-  doksuri: '海洋天气',
-  ridge: '大尺度环流',
-  trough: '大尺度环流',
-  coldpool: '大尺度环流',
-  belts: '大尺度环流',
-  front: '锋面与地形',
-  terrain: '锋面与地形',
-};
 function caseDate(c) {
-  return c.climate ? '1991—2020 常年值' : c.run.replaceAll('-', '.');
+  return c.period || c.run.replaceAll('-', '.');
 }
 function timesFor(c) {
-  return c.climate ? [0, 3, 6, 9] : c.leads.map((n) => Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
+  return c.leads.map(n=>Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
 function caseFrameUrl(c, layer, time) {
-  if (c.climate) return '/assets/cases/belts/climate-' + time + '.json';
+  if (c.daily) return '/assets/cases/disasters/'+c.id+'.json.gz';
   const folder = '/assets/cases/' + c.id + '/';
   if (layer === 'satellite') return null;
   if (layer === 'track') return folder + 'track.json';
@@ -89,6 +75,11 @@ function caseFrameUrl(c, layer, time) {
   return folder + layer + '-' + lead + '.json';
 }
 async function caseFrame(c, layer, time, group) {
+  if (c.daily) {
+    const field=c.daily.frames[new Date(time).toISOString().slice(0,10)]?.[layer];
+    if (!field || Date.parse(field.valid)!==time) throw Error('此时次没有对应的历史格点');
+    return field;
+  }
   if (layer === 'satellite') {
     const date = new Date(time).toISOString().slice(0, 10), folder = '/assets/cases/' + c.id + '/';
     return { image: folder + 'national-' + date + '.jpg', bbox: archiveBounds,
@@ -104,61 +95,6 @@ export async function prepareLiveMap(place, requested) {
   const times = forecastTimes(run), time = times[nearestFrame(times, requested ?? Date.now())];
   const frame = forecastFrame(run, time);
   if (frame) await prepareMapData(await resource(liveGridUrl(frame.run, frame.lead, 'autoUpper', [place[5], place[4]])));
-}
-export function showCases({ main, ctx, catalog }) {
-  main.innerHTML = `<div class="case-browse"><div class="case-filter seg">${['全部', '大尺度环流', '海洋天气', '锋面与地形'].map((x, i) => `<button class="${i ? '' : 'on'}">${x}</button>`).join('')}</div><a class="btn" href="#/cases/disasters">${icon('book',16)}重大气象灾害档案 ${icon('right',14)}</a></div><div id="case-list" class="case-grid"></div>`;
-  const list = $('#case-list', main);
-  let coverObserver, intentTimer;
-  function warm(tile, delay) {
-    clearTimeout(intentTimer);
-    const c = catalog.find(entry => tile.hash === '#/cases/' + entry.id);
-    if (!c) return;
-    intentTimer = setTimeout(() => {
-      if (!ctx.active) return;
-      void loadLand().catch(() => {});
-      const frame = timesFor(c)[Math.floor(c.leads?.length / 2 || 0)];
-      void caseFrame(c, c.defaults[0], frame).then(prepareMapData).catch(() => {});
-    }, delay);
-  }
-  for (const event of ['pointerover', 'focusin']) list.addEventListener(event, e => {
-    const tile = e.target.closest('.case-tile');
-    if (tile && !tile.contains(e.relatedTarget)) warm(tile, event === 'focusin' ? 0 : 80);
-  });
-  for (const event of ['pointerout', 'focusout']) list.addEventListener(event, e => {
-    if (!e.target.closest('.case-tile')?.contains(e.relatedTarget)) clearTimeout(intentTimer);
-  });
-  ctx.onClose(() => { clearTimeout(intentTimer); coverObserver?.disconnect(); });
-  const render = (kind) => {
-    clearTimeout(intentTimer);
-    coverObserver?.disconnect();
-    const order = (id) => id === 'beijing-snow' ? -1 : Number(id === 'bohai22');
-    const ordered = [...catalog].sort((a, b) => order(a.id) - order(b.id));
-    $('#case-list').innerHTML = ordered
-      .filter((c) => kind === '全部' || categories[c.id] === kind)
-      .map(
-        (c) =>
-          `<a class="case-tile" href="#/cases/${c.id}" aria-labelledby="title-${c.id}"><div class="tile-img">${c.climate ? '<canvas id="belts-cover" role="img" aria-label="全球6月至8月平均海平面气压"></canvas>' : `<img src="/assets/cases/${c.id}/cover.jpg" width="800" height="400" alt="${escape(c.area)}的 MODIS 卫星日合成局部" loading="lazy">`}<span>${escape(c.topic)}</span></div><div class="tile-body"><small>${escape(c.area)}　·　${caseDate(c)}</small><h2 id="title-${c.id}">${escape(c.title)}</h2><p>${escape(c.intro)}</p>${icon('out', 16)}</div></a>`
-      )
-      .join('');
-    const cv = $('#belts-cover');
-    if (cv) {
-      const observer = new IntersectionObserver(entries => {
-        if (!entries.some(e => e.isIntersecting)) return;
-        observer.disconnect();
-        void resource('/assets/cases/belts/climate-6.json').then(g => {
-          if (ctx.active && cv.isConnected) return drawMap(cv, g, { cities: false, bbox: [-177, -67, 177, 70] });
-        }).catch(() => {});
-      }, {root: main, rootMargin: '100px'});
-      coverObserver = observer;
-      observer.observe(cv);
-    }
-  };
-  $('.case-filter').onclick = (e) => {
-    if (e.target.tagName !== 'BUTTON') return;
-    $$('.case-filter button').forEach((x) => x.classList.toggle('on', x === e.target));
-    render(e.target.textContent);
-  };
-  render('全部');
 }
 function principle(kind) {
   const mountain = kind === 'terrain';
@@ -202,8 +138,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
   const layers = Array.from({ length: 4 }, (_, i) => choices[i % choices.length]);
   let frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
+  if (c?.daily) index=c.daily.dates.indexOf(c.daily.focus);
   const requestedTime = Date.parse(params.get('time'));
-  if (c && !c.climate && Number.isFinite(requestedTime)) index = nearestFrame(frames, requestedTime);
+  if (c && Number.isFinite(requestedTime)) index = nearestFrame(frames, requestedTime);
   const cycle = c ? null : forecastRun().then(value => ({value}), error => ({error}));
   if (c) {
     // Begin the real first archived field before laying out controls or text.
@@ -231,7 +168,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   let scrubFrame = 0, settleTimer = 0, scrubJob = null, scrubQueued = false, scrubPointer = null;
   let quickVisible = false, nextPreviewAt = 0, frameLoad = null;
   let shownTime = null, loadingTimer = 0;
-  const originalBox = c?.climate ? [-180, -90, 180, 90] : nationalView;
+  const originalBox = nationalView;
   let bbox = [...originalBox], items = {}, forecast = null, requestedComparison = false;
   let viewRevision = 0, redrawFrame = 0;
   void loadLand().catch(() => {});
@@ -243,9 +180,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const visible = visibleLayers();
     return visible.includes('radar') ? 'radar' : visible.includes('satellite') ? 'satellite' : null;
   }
+  const sections=c?.sections ? '<nav class="event-sections" aria-label="事件分析视角">'+c.sections.map(s=>'<a href="'+escape(s.href)+'"'+(s.active?' aria-current="page"':'')+'>'+escape(s.label)+'</a>').join('')+'</nav>' : '';
   const layouts = [[1, '单图'], [2, '双图'], [4, '四图']];
-  main.innerHTML = `<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
-    <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原${c?.climate ? '全球' : '全国'}地图范围">${icon('focus', 15)}</button></div></div>
+  main.innerHTML = `${sections}<div class="page-head map-heading"><div class="seg map-layout" role="group" aria-label="地图布局">${layouts.map(([n, text]) => `<button data-count="${n}" aria-pressed="${n === 1}" class="${n === 1 ? 'on' : ''}">${text}</button>`).join('')}</div>${c ? '<span class="subtitle">' + escape(caseDate(c)) + '</span>' : ''}<button class="btn guide-switch" aria-pressed="${showGuide}">${icon('eye', 16)}读图标注<span class="switch ${showGuide ? 'on' : ''}"></span></button></div>
+    <div class="map-toolbar"><span class="atlas-region">${icon('globe', 16)}${escape(c?.area || '全国')}</span><span id="frame-time"></span>${c ? '' : '<div class="seg mode-tabs" role="group" aria-label="时次类型"><button data-mode="forecast" class="on" aria-pressed="true">预报时次</button><button data-mode="observation" aria-pressed="false">观测回放</button></div>'}<div class="zoom"><button aria-label="缩小地图">${icon('minus', 15)}</button><button aria-label="放大地图">${icon('plus', 15)}</button><button aria-label="还原全国地图范围">${icon('focus', 15)}</button></div></div>
     <div class="map-grid" data-count="1"></div>
     <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button><select id="playback-rate" aria-label="播放速度" title="播放速度">${playbackRates.map(rate => '<option value="' + rate + '">' + rate + '×</option>').join('')}</select></div>
     <div id="reading"></div>`;
@@ -282,7 +220,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       btn.setAttribute('aria-pressed', String(selected));
     }
   }
-  setPanels(1);
+  setPanels(c?.daily ? 4 : 1);
   const slider = $('#frame-slider');
   const ruler = $('#time-ticks'), preview = $('.time-preview', main);
   let stops = [], hoverFrame = null, rulerWidth = 0;
@@ -309,7 +247,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     else void refreshView();
   };
   function frameLabel(t) {
-    return c?.climate ? seasons[t / 3] : validText(t);
+    if (c?.daily) return dateText(t, {month:'numeric',day:'numeric'});
+    return validText(t);
   }
   function updateTicks() {
     stops = frameStops(frames);
@@ -323,7 +262,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       return;
     }
     controls(index);
-    if (rulerWidth) drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null, rulerWidth);
+    if (rulerWidth) drawTimeRuler(ruler, frames, stops, rulerWidth, Boolean(c?.daily));
   }
   async function setMode(observe) {
     clearSeekStatus();
@@ -392,7 +331,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const el = $('#reading'),
       crossOpen = $('.cross-section', el)?.open,
       localOpen = $('.case-local', el)?.open;
-    if (!showGuide) {
+    if (!showGuide && !c?.event) {
       el.innerHTML = '';
       return;
     }
@@ -436,7 +375,16 @@ export async function showMaps({ main, ctx, place, params }, c) {
       }
       return guideFor(l);
     }).filter(Boolean);
-    el.innerHTML = `<section class="reading panel"><div class="reading-main"><h2>${icon('book', 18)}${c ? '怎样读这次过程' : '怎样读天气图'}</h2>${(c ? c.guides : [...new Set(reading)]).map((s, i) => `<p class="step"><b>${i + 1}</b>${escape(s)}</p>`).join('')}${compare}</div>${c ? `<div class="case-evidence"><h3>${c.climate ? '资料时段' : c.dataMode === 'reanalysis' ? '再分析回看' : '当时的预报'}</h3><p>${escape(c.forecast)}</p><h3>${c.climate ? '怎么比较' : '实况回看'}</h3><p>${escape(c.outcome)}</p>${safeLink(c.link, '查看机构原始资料')} ${c.outcomeSource ? safeLink(c.outcomeSource, '实况记录') : ''}</div>` : ''}</section>${c?.cross ? principle(c.cross) : ''}${c?.alternate ? `<a class="practice" href="#/cases/${c.alternate}">${icon('layers', 17)}换一次降雪，隐藏标注自己读 ${icon('arrow', 16)}</a>` : ''}`;
+    const links = c ? [[c.report||c.link,c.reportName||'查看机构原始资料'],[c.outcomeSource,'实况记录'],
+      [c.link!==c.report&&c.report?c.link:null,'专题资料'],[c.event?.extraSource,'过程核查资料'],[c.event?.map.source,'时段核查资料'],...(c.dataLinks||[])] : [];
+    const seen=new Set();
+    const sources=links.filter(([url])=>url&&!seen.has(url)&&seen.add(url)).map(([url,label])=>safeLink(url,label)).join(' ');
+    const evidence=c ? '<div class="case-evidence"><h3>过程与影响</h3><p>'+escape(c.daily?c.outcome:c.event?.fact||c.outcome)+'</p><h3>'+
+      (c.daily?'图上读数':c.dataMode==='reanalysis'?'再分析回看':'当时的预报')+'</h3><p>'+escape(c.forecast)+'</p>'+(c.evidenceCurve||'')+
+      (!c.daily&&c.event&&c.outcome!==c.event.fact?'<p>'+escape(c.outcome)+'</p>':'')+'<details class="event-sources"><summary>资料来源</summary>'+
+      (c.method?'<p>'+escape(c.method)+' 雨量图为 CPC 陆地日累计，原始格距 0.5°，图上按 1° 取样。各地雨量站的日界依资料而定。</p>':'')+sources+'</details></div>' : '';
+    el.innerHTML = '<section class="reading panel"><div class="reading-main"><h2>'+icon('book',18)+(c?'怎样读这次过程':'怎样读天气图')+'</h2>'+
+      (c?c.guides:[...new Set(reading)]).map((s,i)=>'<p class="step"><b>'+(i+1)+'</b>'+escape(s)+'</p>').join('')+compare+'</div>'+evidence+'</section>'+(c?.cross?principle(c.cross):'');
     const auto = Object.values(items).find((g) => g?.autoRole);
     if (!c && visibleLayers().includes('radar'))
       $('.reading-main', el).insertAdjacentHTML('beforeend', safeLink('https://www.nmc.cn/publish/radar/index.html', '中央气象台全国雷达拼图'));
@@ -534,7 +482,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   observer.observe(grid, { box: 'device-pixel-content-box' });
   const rulerObserver = new ResizeObserver(([entry]) => {
     rulerWidth = entry.contentRect.width;
-    drawTimeRuler(ruler, frames, stops, c?.climate ? seasons : null, rulerWidth);
+    drawTimeRuler(ruler, frames, stops, rulerWidth, Boolean(c?.daily));
   });
   rulerObserver.observe(ruler);
   window.addEventListener('resize', resizePlots, { signal: ctx.signal });
@@ -746,7 +694,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   function displayTime(time) {
     if (shownTime !== time)
-      frameTime.textContent = frameLabel(time) + (c?.climate ? '' : ' · 北京时间');
+      frameTime.textContent = frameLabel(time) + (c?.daily ? '' : ' · 北京时间');
     shownTime = time;
     if (time === frames[index]) clearSeekStatus();
   }
@@ -942,7 +890,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     scrubFrame = 0;
     if (!ctx.active || !scrubQueued) return;
     if (now < nextPreviewAt) { scheduleScrub(); return; }
-    if (scrubJob && scrubJob.target !== index &&
+    if (!c?.daily && scrubJob && scrubJob.target !== index &&
         !visibleLayers().every(layer => cachedResource(frameUrl(layer, frames[index]))?.ready)) {
       // The outstanding read will schedule the latest selection on completion.
       return;
@@ -1158,7 +1106,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (observing) return;
   }
   const initialFrame = refreshView();
-  if (c && ['bohai', 'bohai22'].includes(c.id)) {
+  if (c?.id === 'bohai') {
     localArchive = await resource('/assets/cases/' + c.id + '/local.json');
     if (!ctx.active) return;
   }

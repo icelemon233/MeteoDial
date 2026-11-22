@@ -6,10 +6,10 @@ const day = 1440 * minute;
 const beijingOffset = 480 * minute;
 const labelIntervals = [1, 2, 5, 10, 15, 20, 30, 60, 120, 180, 360, 720, 1440, 2880, 4320, 10080, 20160, 43200];
 
-function candidates(frames, width, seasonal) {
+function candidates(frames, width) {
   const first = frames[0], last = frames.at(-1);
   const gap = last - first > 3 * day ? 48 : 54;
-  if (seasonal || frames.length * gap <= width) return frames.map((_, i) => i);
+  if (frames.length * gap <= width) return frames.map((_, i) => i);
   const desired = (last - first) / minute / Math.max(1, width / gap);
   const step = (labelIntervals.find(value => value >= desired) || labelIntervals.at(-1)) * minute;
   const indexes = new Set([0]);
@@ -24,18 +24,18 @@ function candidates(frames, width, seasonal) {
   return [...indexes];
 }
 
-export function drawTimeRuler(element, frames, stops, seasonNames, width = element.clientWidth) {
+export function drawTimeRuler(element, frames, stops, width = element.clientWidth, daily = false) {
   if (!frames.length || !width) return;
   const end = frames.length - 1, span = frames[end] - frames[0];
   const position = (i) => stops[end] ? stops[i] / stops[end] : 0;
   const textFor = (i) => {
-    if (seasonNames) return seasonNames[frames[i] / 3];
     const time = frames[i];
+    if (daily) return md(time);
     if (i === 0 || i === end) return validText(time);
     if (span > 3 * day) return md(time);
     return (time + beijingOffset) % day === 0 ? validText(time) : clockTime(time);
   };
-  const majorIndexes = new Set(candidates(frames, width, seasonNames));
+  const majorIndexes = new Set(candidates(frames, width));
   const labels = [];
   const fragment = document.createDocumentFragment();
   let previousMark = -Infinity;
@@ -60,8 +60,8 @@ export function drawTimeRuler(element, frames, stops, seasonNames, width = eleme
   if (labels.length < 2) return;
   const first = labels[0].label, last = labels.at(-1).label;
   if (first.getBoundingClientRect().right + 8 > last.getBoundingClientRect().left) {
-    first.textContent = seasonNames ? first.textContent.slice(0, 2) : clockTime(frames[0]);
-    last.textContent = seasonNames ? last.textContent.slice(0, 2) : clockTime(frames[end]);
+    first.textContent = daily ? md(frames[0]) : clockTime(frames[0]);
+    last.textContent = daily ? md(frames[end]) : clockTime(frames[end]);
   }
   // Measure the displayed glyphs, including tabular digits and Windows font fallback.
   const rects = labels.map(({label}) => label.getBoundingClientRect());

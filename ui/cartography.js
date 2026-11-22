@@ -95,8 +95,13 @@ const palettes = {
     [12, [206, 118, 95]],
     [25, [171, 85, 127]],
   ],
+  rainDay: [
+    [0,[31,52,71]], [1,[65,113,134]], [10,[72,164,156]], [25,[145,190,127]],
+    [50,[222,173,99]], [100,[196,102,98]], [250,[144,75,143]],
+  ],
 };
 function palette(layer) {
+  if (layer === 'rainDay') return palettes.rainDay;
   if (layer === 'height400' || layer === 'height300') {
     const offset = layer === 'height400' ? 1650 : 3650;
     return palettes.height.map(([value, rgb]) => [value + offset, rgb]);

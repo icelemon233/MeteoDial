@@ -38,7 +38,8 @@ async function checkDesktop() {
     await window.locator('#place-query').fill('环翠');
     await window.locator('#results button').first().click();
     await window.locator('#nav [data-nav=cases]').click();
-    await window.locator('.case-tile[href="#/cases/bohai"]').click();
+    await window.locator('.event-row[href="#/cases/2023-c3"]').click();
+    await window.locator('.event-sections').getByRole('link',{name:'越过渤海的冷流雪'}).click();
     await window.locator('.case-local summary').click();
     assert.equal(await window.locator('.case-local tbody tr').count(), 24);
     assert.equal(await window.locator('.map-panel').count(), 1);
@@ -68,30 +69,32 @@ async function checkDesktop() {
     await new Promise(resolve => setTimeout(resolve, 1400));
     assert.equal(await slider.inputValue(), '0');
     await window.locator('.guide-switch').click();
-    assert.equal(await window.locator('.reading').count(), 0);
+    assert.equal(await window.locator('.guide-switch').getAttribute('aria-pressed'), 'false');
+    assert.equal(await window.locator('.reading').count(), 1);
     await window.locator('#nav [data-nav=cases]').click();
-    await window.locator('.case-tile[href="#/cases/beijing-snow"]').click();
-    await window.waitForFunction(() => document.querySelector('#frame-slider')?.max === '27');
-    const snowSlider = window.locator('#frame-slider');
-    await snowSlider.press('Home');
+    await window.locator('.event-row[href="#/cases/2021-c2"]').click();
+    await window.locator('.event-sections').getByRole('link',{name:'郑州一小时的极端雨强'}).click();
+    await window.waitForFunction(() => document.querySelector('#frame-slider')?.max === '60');
+    const floodSlider = window.locator('#frame-slider');
+    await floodSlider.press('Home');
     await window.locator('#next-frame').click();
-    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/10 09:00'));
-    assert.equal(await snowSlider.getAttribute('aria-valuetext'), '12/10 09:00');
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('7/19 08:00'));
+    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 08:00');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
-    assert.equal(await window.locator('.time-mark').count(), 28);
+    assert.equal(await window.locator('.time-mark').count(), 31);
     const speed = window.getByRole('combobox', {name:'播放速度'});
     await speed.selectOption('2');
-    assert.equal(await snowSlider.getAttribute('aria-valuetext'), '12/10 09:00');
+    assert.equal(await floodSlider.getAttribute('aria-valuetext'), '7/19 08:00');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
     await window.locator('#play').click();
-    await window.waitForFunction(() => document.querySelector('#frame-slider').value === '3');
+    await window.waitForFunction(() => document.querySelector('#frame-slider').value === '25');
     await speed.selectOption('0.5');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'true');
-    await snowSlider.press('Home');
+    await floodSlider.press('Home');
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
-    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/10 08:00'));
-    await snowSlider.scrollIntoViewIfNeeded();
-    const bounds = await snowSlider.boundingBox();
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('7/18 20:00'));
+    await floodSlider.scrollIntoViewIfNeeded();
+    const bounds = await floodSlider.boundingBox();
     // Sample the displayed map on real input events while the mouse is still down.
     await window.evaluate(() => {
       const range = document.querySelector('#frame-slider'), title = document.querySelector('#frame-time');
@@ -103,18 +106,18 @@ async function checkDesktop() {
         range.dataset.scrubSamples = String(samples.size);
       }, {once:true});
     });
-    const x = value => bounds.x + 8 + value / 27 * (bounds.width - 16), y = bounds.y + bounds.height / 2;
+    const x = value => bounds.x + 8 + value / 60 * (bounds.width - 16), y = bounds.y + bounds.height / 2;
     await window.mouse.move(x(0), y);
     await window.mouse.down();
-    await window.mouse.move(x(27), y, {steps:42});
-    await window.mouse.move(x(16), y, {steps:20});
+    await window.mouse.move(x(60), y, {steps:42});
+    await window.mouse.move(x(40), y, {steps:20});
     await window.mouse.up();
-    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('12/11 00:00'));
-    assert(Number(await snowSlider.getAttribute('data-scrub-samples')) >= 2);
+    await window.waitForFunction(() => document.querySelector('#frame-time').textContent.includes('7/20 12:00'));
+    assert(Number(await floodSlider.getAttribute('data-scrub-samples')) >= 2);
     assert.equal(await window.locator('#play').getAttribute('aria-pressed'), 'false');
     let releaseLayer;
     const held = new Promise(resolve => { releaseLayer = resolve; });
-    const slowLayer = '**/beijing-snow/temp2-16.json';
+    const slowLayer = '**/henan-2021/moisture700-52.json';
     await window.route(slowLayer, async route => {
       await held;
       await route.continue().catch(() => {});
@@ -123,11 +126,11 @@ async function checkDesktop() {
       await window.getByRole('button', {name:'四图', exact:true}).click();
       await window.waitForFunction(() => {
         const panels = [...document.querySelectorAll('.map-panel')];
-        return panels.length === 4 && panels.slice(0,3).every(p => p.querySelector('.map-source').textContent.includes('12/11 00:00')) &&
+        return panels.length === 4 && panels.slice(0,3).every(p => p.querySelector('.map-source').textContent.includes('7/20 12:00')) &&
           !panels[3].dataset.layer && !panels[3].querySelector('.map-source').textContent;
       });
       await window.locator('#next-frame').click();
-      await window.waitForFunction(() => [...document.querySelectorAll('.map-source')].every(e => e.textContent.includes('12/11 01:00')));
+      await window.waitForFunction(() => [...document.querySelectorAll('.map-source')].every(e => e.textContent.includes('7/20 13:00')));
     } finally {
       releaseLayer();
       await window.unroute(slowLayer);

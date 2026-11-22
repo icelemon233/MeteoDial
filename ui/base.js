@@ -163,6 +163,7 @@ export const layerNames = {
   height500: '500 hPa 位势高度',
   pressure: '海平面气压',
   moisture700: '700 hPa 相对湿度',
+  rainDay: '日累计降水',
   satellite: '卫星云图',
   radar: '区域雷达 · 台湾近海',
   track: '台风路径',
@@ -177,6 +178,7 @@ export const layerUnit = {
   height500: 'm',
   pressure: 'hPa',
   moisture700: '%',
+  rainDay: 'mm',
   climate: 'hPa',
   zonal: 'hPa',
 };

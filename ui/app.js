@@ -14,13 +14,13 @@ import {
   safeLink,
 } from './base.js';
 import { showForecast } from './forecast.js';
-import { showMaps, showCases, prepareLiveMap } from './viewer.js';
+import { showMaps, prepareLiveMap } from './viewer.js';
 import { showDisasters } from './disasters.js';
 const main = $('#content');
 const nav = [
   ['weather', 'forecast', '本地天气'],
   ['maps', 'layers', '天气图'],
-  ['cases', 'book', '天气案例'],
+  ['cases', 'book', '重大灾害分析'],
 ];
 $('#nav').innerHTML = nav
   .map(
@@ -201,7 +201,7 @@ $('#sources').onclick = () =>
 <dt>地面观测</dt><dd>按定位或区县代表点从 2,420 个内地国家站中选最近站，距离按 2021 年站表估算。气温取三小时内的实测，距站超过 100 公里会标为远站。国家站缺报时查询 100 公里内的航空站。${safeLink('https://q-weather.info/apidoc/', '查天气 API')} ${safeLink('https://github.com/nmcdev/nmc_met_graphics/blob/4fcbfddaf551f04cd8e88b6374b87c766ffc4ec7/nmc_met_graphics/resources/stations/cma_national_station_info.dat', '国家站表')} ${safeLink('https://aviationweather.gov/data/api/', 'NOAA AWC')}</dd>
 <dt>高空与地面图</dt><dd>NOAA GFS 提供起报后前五天的逐小时预报。三小时时次缺层或选点缺测时，还会查询同批次、同时效的 ECMWF IFS 和 NOAA GEFS 控制成员。自动选层可再改用一个相邻候选，图下标明实际层和模式。灰色表示地形遮挡。历史案例保留归档资料。${safeLink('https://www.noaa.gov/jetstream/upper-air-charts/constant-pressure-charts-850-mb', '等压面读图')} ${safeLink('https://www.ecmwf.int/en/forecasts/datasets/open-data', 'IFS 开放资料')} ${safeLink('https://www.nco.ncep.noaa.gov/pmb/products/gens/', 'GEFS 产品')} ${safeLink('https://weatherbench2.readthedocs.io/en/latest/data-guide.html', '历史格点来源')}</dd>
 <dt>卫星观测</dt><dd>全国红外云图采用 NASA GIBS 发布的葵花 9 号 B13 十分钟观测。全国帧暂缺时显示同一时刻可用的日本气象厅区域图。历史案例使用 Terra/MODIS 真彩色日合成。${safeLink('https://www.data.jma.go.jp/mscweb/en/general/note.html', '日本气象厅使用说明')} ${safeLink('https://www.earthdata.nasa.gov/data/tools/gibs', 'NASA GIBS')}</dd>
-<dt>台风与气候</dt><dd>近期路径由香港天文台发布，历史最佳路径取自日本气象厅 RSMC Tokyo。气候平均采用 NOAA PSL 的 NCEP/NCAR 1991—2020 常年值。${safeLink('https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info', '香港天文台')} ${safeLink('https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.derived.html', 'NOAA PSL')}</dd>
+<dt>台风与气候</dt><dd>近期路径由香港天文台发布，历史最佳路径取自日本气象厅 RSMC Tokyo。灾害分析的全国逐日图使用 NCEP/NCAR 再分析或 GFS 分析场，日累计降水来自 NOAA CPC 陆地雨量站格点分析。${safeLink('https://data.gov.hk/sc-data/dataset/hk-hko-rss-tc-track-info', '香港天文台')} ${safeLink('https://psl.noaa.gov/data/gridded/data.ncep.reanalysis.html', 'NCEP/NCAR 再分析')+' '+safeLink('https://www.psl.noaa.gov/data/gridded/data.cpc.globalprecip.html','CPC 降水')}</dd>
 <dt>雷达观测</dt><dd>CWA 整合回波图覆盖台湾及邻近海域。全国拼图与内地单站图可在中央气象台查看。${safeLink('https://www.nmc.cn/publish/radar/index.html', '中央气象台全国雷达拼图')} ${safeLink('https://www.cwa.gov.tw/V8/C/W/OBS_Radar.html', 'CWA 雷达')} ${safeLink('https://data.gov.tw/dataset/75125', '开放资料说明')}</dd>
 <dt>地理资料</dt><dd>中国轮廓采用 NMC 地图边界，世界海岸线来自 Natural Earth。区县位置来自 AreaCity 等公开区划资料，航空站位置来自 OurAirports。${safeLink('https://github.com/nmcdev/nmc_met_graphics/tree/4fcbfdd/nmc_met_graphics/resources/maps', 'NMC 地图边界')} ${safeLink('https://github.com/xiangyuecn/AreaCity-JsSpider-StatsGov', 'AreaCity')} ${safeLink('https://www.naturalearthdata.com/about/terms-of-use/', 'Natural Earth')}</dd></dl>`);
 function tick() {
@@ -218,8 +218,7 @@ function route() {
   const key = parts[0] === 'settings' || nav.some((n) => n[0] === parts[0]) ? parts[0] : 'weather',
     params = new URLSearchParams(raw),
     label = nav.find((n) => n[0] === key)?.[2] || '设置';
-  const c = catalog.find((entry) => entry.id === parts[1]);
-  const archive = key === 'cases' && parts[1] === 'disasters';
+  const eventId = parts[1] === 'disasters' ? parts[2] : parts[1];
   $$('#nav a').forEach((a) => {
     a.classList.toggle('active', a.dataset.nav === key);
     a.setAttribute('aria-current', a.dataset.nav === key ? 'page' : 'false');
@@ -228,16 +227,16 @@ function route() {
   settingsNav.classList.toggle('active', key === 'settings');
   settingsNav.setAttribute('aria-current', key === 'settings' ? 'page' : 'false');
   $('#breadcrumb').innerHTML =
-    key === 'cases' && (c || archive)
-      ? '<a href="#/cases" title="返回天气案例" aria-label="返回天气案例">' +
+    key === 'cases' && eventId
+      ? '<a href="#/cases" title="返回重大灾害分析" aria-label="返回重大灾害分析">' +
         icon('left', 18) +
         '</a><h1>' +
-        escape(archive ? '重大气象灾害档案' : c.title) +
+        escape(label) +
         '</h1>'
       : '<h1>' + escape(label) + '</h1>';
   document.title = label + ' · MeteoDial';
   main.scrollTop = 0;
-  const env = { main, ctx, place, locationMatch, catalog, params, search: searchDialog };
+  const env = { main, ctx, place, locationMatch, catalog, byId, params, search: searchDialog };
   const task =
     key === 'settings'
       ? showSettings(env)
@@ -245,11 +244,7 @@ function route() {
         ? showForecast(env)
         : key === 'maps'
           ? showMaps(env, null)
-          : archive
-            ? showDisasters(env, parts[2])
-          : c
-            ? showMaps(env, c)
-            : showCases(env);
+          : showDisasters(env, eventId);
   Promise.resolve(task).catch((error) => {
     if (own.active) {
       main.innerHTML =

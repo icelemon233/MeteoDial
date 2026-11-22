@@ -17,7 +17,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "cold-2016": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -37,7 +37,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "henan-2021": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -57,27 +57,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
-  },
-  "beijing-snow": {
-    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
-    "utcDate": "2023-12-11",
-    "sourceFrame": "2023-12-11.jpg",
-    "sourceImageBounds": [
-      110,
-      35,
-      122,
-      44
-    ],
-    "cropPixels": [
-      0,
-      84,
-      840,
-      504
-    ],
-    "width": 800,
-    "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "bohai": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -97,27 +77,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
-  },
-  "bohai22": {
-    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
-    "utcDate": "2022-12-22",
-    "sourceFrame": "2022-12-22.jpg",
-    "sourceImageBounds": [
-      116,
-      34,
-      126,
-      42
-    ],
-    "cropPixels": [
-      0,
-      126,
-      840,
-      546
-    ],
-    "width": 800,
-    "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "doksuri": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -137,7 +97,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "ridge": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -157,7 +117,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "trough": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -177,7 +137,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "coldpool": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -197,7 +157,7 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   },
   "front": {
     "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
@@ -217,26 +177,6 @@
     ],
     "width": 800,
     "height": 400,
-    "screenedDarkFraction": 0.0
-  },
-  "terrain": {
-    "source": "NASA GIBS · Terra/MODIS Corrected Reflectance (True Color)",
-    "utcDate": "2023-07-05",
-    "sourceFrame": "2023-07-05.jpg",
-    "sourceImageBounds": [
-      112,
-      21,
-      116,
-      24
-    ],
-    "cropPixels": [
-      0,
-      122,
-      840,
-      542
-    ],
-    "width": 800,
-    "height": 400,
-    "screenedDarkFraction": 0.0
+    "screenedDarkFraction": 0
   }
 }

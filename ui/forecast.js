@@ -376,7 +376,7 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
         .join(
           ''
         )}</div></div><div class="chart-meta"><span>未来 48 小时</span><span id="chart-unit">${metrics[metric][1]}</span></div><div class="chart" id="hour-chart"></div></section>
-      <section class="feature-case"><img class="feature-photo" src="/assets/cases/bohai/cover.jpg" width="800" height="400" alt="山东半岛的 MODIS 卫星日合成局部" loading="lazy"><div class="feature-copy"><h2>越过渤海的冷流雪</h2><p>为什么烟台、威海沿海的雪，常常比内陆更集中？</p><a class="textlink" href="#/cases/bohai">回放这次过程 ${icon('arrow', 16)}</a></div></section></div>
+      <section class="feature-case"><img class="feature-photo" src="/assets/cases/bohai/cover.jpg" width="800" height="400" alt="山东半岛的 MODIS 卫星日合成局部" loading="lazy"><div class="feature-copy"><h2>越过渤海的冷流雪</h2><p>为什么烟台、威海沿海的雪，常常比内陆更集中？</p><a class="textlink" href="#/cases/2023-c3?section=bohai">回放这次过程 ${icon('arrow', 16)}</a></div></section></div>
       <section class="panel day-panel"><div class="section-top"><h2>${icon('calendar')}十日天气</h2><span class="muted">低温 / 高温</span></div><div class="day-list">${dailyRows}</div></section></div>`;
     const redraw = () => {
       if (ctx.active) chart($('#hour-chart'), hourly, metric);
@@ -423,7 +423,7 @@ export async function showForecast({ main, ctx, place, locationMatch, search }) 
         $('#weather-details').className = 'panel';
         $('#weather-details').innerHTML =
           failBox(e.message) +
-          '<a class="offline-case" href="#/cases/bohai">打开已收录的降雪案例 ' +
+          '<a class="offline-case" href="#/cases/2023-c3?section=bohai">查看山东半岛暴雪分析 ' +
           icon('arrow', 15) +
           '</a>';
         $('.retry').onclick = refresh;

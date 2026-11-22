@@ -238,13 +238,15 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         res.writeHead(404);
         return res.end();
       }
-      const ext = path.extname(rel);
+      const compressed = /^assets\/cases\/disasters\/[\w-]+\.json\.gz$/.test(rel);
+      const ext = compressed ? '.json' : path.extname(rel);
       if (!mime[ext]) {
         res.writeHead(404);
         return res.end();
       }
       const content = await fs.readFile(path.join(ROOT, rel));
       res.setHeader('Content-Type', mime[ext]);
+      if (compressed) res.setHeader('Content-Encoding','gzip');
       res.setHeader(
         'Cache-Control',
         rel.startsWith('assets/') ? 'private, max-age=3600' : 'no-cache',

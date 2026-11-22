@@ -1,4 +1,6 @@
 import { $, escape, get, icon, safeLink } from './base.js';
+import { showMaps } from './viewer.js';
+import { overview } from './disaster-analysis.js';
 
 let archive;
 function loadArchive() {
@@ -16,21 +18,55 @@ function termsFor(value) {
     .filter(Boolean)
     .map((word) => (word === '寒灾' ? '低温' : word));
 }
-export async function showDisasters({ main, ctx, params }, id) {
+export async function showDisasters(env, id) {
+  const { main, ctx, params, catalog, byId } = env;
   const data = await loadArchive();
   if (!ctx.active) return;
-  const listing = '#/cases/disasters';
-  const suffix = params.size ? '?' + params.toString() : '';
+  const listing = '#/cases';
+  const filters = new URLSearchParams(params);
+  filters.delete('time');
+  filters.delete('section');
+  const filterSuffix = filters.size ? '?' + filters : '';
   if (id) {
-    const event = data.events.find((e) => e.id === id);
-    if (!event) throw Error('档案中没有这起事件');
+    const event = data.events.find(e => e.id === id || e.chapters?.includes(id));
+    if (!event) {
+      if (!['beijing-snow','bohai22','terrain','belts'].includes(id)) throw Error('没有找到这起灾害事件');
+      history.replaceState(null,'',listing+filterSuffix);
+      $('#breadcrumb').innerHTML='<h1>重大灾害分析</h1>';
+      return showDisasters(env);
+    }
     const year = data.years[event.year];
     const source = event.source || year.source;
     const detailLink = event.page ? source.split('#')[0] + '#page=' + event.page : source;
     $('#breadcrumb h1').textContent = event.title;
-    $('#breadcrumb a').href = listing + suffix;
-    main.innerHTML = `<article class="event-article panel"><div class="event-heading"><div class="muted">${event.year} · ${escape(event.kind)}</div><h2>${escape(event.title)}</h2></div><dl class="event-copy"><dt>过程与影响</dt><dd>${escape(event.fact)}</dd><dt>怎样读这次过程</dt><dd>${escape(event.analysis)}</dd></dl><div class="event-links">${event.replay ? `<a class="btn" href="#/cases/${escape(event.replay)}">${icon('layers', 16)}回放天气过程</a>` : ''}${safeLink(detailLink, event.sourceTitle || year.label)}${event.extraSource ? safeLink(event.extraSource, '过程核查资料') : ''}</div></article>`;
-    return;
+    $('#breadcrumb a').href = listing + filterSuffix;
+    const base=listing+'/'+event.id;
+    const selected = event.chapters?.includes(id) ? id : params.get('section');
+    const chapter = event.chapters?.includes(selected) && catalog.find(c=>c.id===selected);
+    const link = (section, time) => {
+      const q=new URLSearchParams(filters);
+      if (section) q.set('section',section);
+      if (time) q.set('time',time);
+      return base+(q.size?'?'+q:'');
+    };
+    history.replaceState(null,'',link(chapter?.id,params.get('time')));
+    main.innerHTML='<p class="loading" role="status">读取过程天气图…</p>';
+    let analysis;
+    if (chapter) analysis={...chapter};
+    else {
+      const bundle=await get('/assets/cases/disasters/'+event.id+'.json.gz',ctx.signal);
+      if (!ctx.active) return;
+      analysis=overview(event,bundle,byId.get(event.map.place),detailLink);
+    }
+    analysis.event=event;
+    analysis.report=detailLink;
+    analysis.reportName=event.sourceTitle||year.label;
+    if (event.chapters?.length) {
+      analysis.sections=[{label:'过程全景',href:link(null),active:!chapter},...event.chapters.map(key=>({
+        label:catalog.find(c=>c.id===key).title,href:link(key),active:key===chapter?.id
+      }))];
+    }
+    return showMaps(env,analysis);
   }
   const yearIds = Object.keys(data.years)
     .map(Number)
@@ -38,7 +74,7 @@ export async function showDisasters({ main, ctx, params }, id) {
   const kinds = [...new Set(data.events.map((e) => e.kind))].sort((a, b) =>
     a.localeCompare(b, 'zh-CN'),
   );
-  main.innerHTML = `<div class="archive-filter"><input id="event-search" type="search" placeholder="搜索地区、事件或年份" aria-label="搜索灾害档案"><select aria-label="年份" id="event-year"><option value="">全部年份</option>${yearIds.map((y) => `<option>${y}</option>`).join('')}</select><select aria-label="灾种" id="event-kind"><option value="">全部灾种</option>${kinds.map((v) => `<option>${escape(v)}</option>`).join('')}</select></div><div class="archive-summary"><span id="event-count" aria-live="polite"></span><details><summary>收录范围</summary><p>${escape(data.scope)}</p></details></div><div id="event-list"></div>`;
+  main.innerHTML = `<div class="archive-filter"><input id="event-search" type="search" placeholder="搜索地区、事件或年份" aria-label="搜索重大灾害"><select aria-label="年份" id="event-year"><option value="">全部年份</option>${yearIds.map((y) => `<option>${y}</option>`).join('')}</select><select aria-label="灾种" id="event-kind"><option value="">全部灾种</option>${kinds.map((v) => `<option>${escape(v)}</option>`).join('')}</select></div><div class="archive-summary"><span id="event-count" aria-live="polite"></span><details><summary>收录范围</summary><p>${escape(data.scope)}</p></details></div><div id="event-list"></div>`;
   const search = $('#event-search'),
     year = $('#event-year'),
     kind = $('#event-kind'),
@@ -55,14 +91,15 @@ export async function showDisasters({ main, ctx, params }, id) {
     const ending = query.size ? '?' + query.toString() : '';
     history.replaceState(null, '', listing + ending);
     const events = data.events.filter((e) => {
-      const haystack = [e.year, e.title, e.fact, e.kind].join(' ').toLowerCase();
+      const haystack = [e.year, e.title, e.fact, e.kind, byId.get(e.map.place)?.[1],
+        ...(e.chapters || []).map(key => catalog.find(c=>c.id===key)?.title)].join(' ').toLowerCase();
       return (
         (!year.value || e.year === Number(year.value)) &&
         (!kind.value || e.kind === kind.value) &&
         terms.every((term) => haystack.includes(term))
       );
     });
-    $('#event-count').textContent = events.length + ' 条过程记录';
+    $('#event-count').textContent = events.length + ' 起灾害事件';
     const sections = [];
     for (const y of yearIds) {
       const group = events.filter((e) => e.year === y);

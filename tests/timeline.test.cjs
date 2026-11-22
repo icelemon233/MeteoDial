@@ -107,11 +107,12 @@ test('逐小时时次只接受同批、同一有效时刻的模式场', async ()
   await assert.rejects(get(start), /未取得/);
 });
 
-test('北京初雪离线逐小时归档在午夜前后连续，五个模式图层与原生时次一致', () => {
-  const c = require('../assets/data/catalog.json').find(item => item.id === 'beijing-snow');
-  assert.deepEqual(c.leads, Array.from({length:28}, (_, i) => i));
+test('河南暴雨专题在峰值期连续逐小时，四个模式图层与原生时次一致', () => {
+  const c = require('../assets/data/catalog.json').find(item => item.id === 'henan-2021');
+  const run=c.run+'T00:00:00.000Z', start=Date.parse(run);
+  assert.deepEqual(c.leads.filter(h=>h>=36&&h<=63), Array.from({length:28}, (_, i) => 36+i));
   const layers = c.layers.filter(layer => layer !== 'satellite');
-  assert.equal(layers.length, 5);
+  assert.equal(layers.length, 4);
   for (const h of c.leads) {
     for (const layer of layers) {
       const file = path.join(__dirname, '../assets/cases', c.id, layer + '-' + h + '.json');

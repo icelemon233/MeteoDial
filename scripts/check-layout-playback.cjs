@@ -9,12 +9,12 @@ function gate() {
 
 async function checkLayoutPlayback(page) {
   const origin = new URL(page.url()).origin;
-  await page.goto(origin + '/?layout-playback#/cases/beijing-snow?time=2023-12-10T00%3A00%3A00Z');
+  await page.goto(origin + '/?layout-playback#/cases/2021-c2?section=henan-2021&time=2021-07-19T12%3A00%3A00Z');
   const speed = page.getByRole('combobox', {name:'播放速度'});
   const layout = count => page.locator('.map-layout button[data-count="' + count + '"]').click();
   const wait = (fn, arg, timeout = 7000) => page.waitForFunction(fn, arg, {timeout, polling:25});
   const frame = () => page.locator('#frame-slider').inputValue().then(Number);
-  await wait(() => document.querySelector('.map-source')?.textContent.includes('12/10 08:00'));
+  await wait(() => document.querySelector('.map-source')?.textContent.includes('7/19 20:00'));
   await page.evaluate(() => {
     const title = document.querySelector('#frame-time');
     window.layoutFrames = [];
@@ -34,15 +34,15 @@ async function checkLayoutPlayback(page) {
   await wait(() => window.layoutFrames.length >= 2);
   const current = gate(), primary = gate(), fourth = gate();
   let blockCurrent = true, sawCurrent = false, primaryReads = 0, fourthReads = 0, slowLead = -1;
-  const pattern = '**/beijing-snow/*-*.json';
+  const pattern = /\/assets\/cases\/henan-2021\/(wind850|moisture700)-(\d+)\.json$/;
   const intercept = async route => {
-    const [, layer, lead] = /\/([a-z0-9]+)-(\d+)\.json$/.exec(route.request().url());
-    if (blockCurrent && layer === 'temp2' && Number(lead) === await page.evaluate(() => window.layoutSwitchFrom)) {
+    const [, layer, lead] = pattern.exec(route.request().url());
+    if (blockCurrent && layer === 'moisture700' && Number(lead) - 12 === await page.evaluate(() => window.layoutSwitchFrom)) {
       sawCurrent = true;
       await current.promise;
     } else if (Number(lead) === slowLead) {
-      if (layer === 'wind925') { primaryReads++; await primary.promise; }
-      if (layer === 'temp2') { fourthReads++; await fourth.promise; }
+      if (layer === 'wind850') { primaryReads++; await primary.promise; }
+      if (layer === 'moisture700') { fourthReads++; await fourth.promise; }
     }
     await route.continue().catch(() => {});
   };
@@ -54,9 +54,9 @@ async function checkLayoutPlayback(page) {
     assert.ok(sawCurrent, '未覆盖新增面板的慢请求');
     blockCurrent = false;
     current.release();
-    slowLead = (await frame() + 6) % 28;
+    slowLead = 12 + await frame() + 6;
     await wait(previous => Number(document.querySelector('#frame-slider').value) === previous,
-      (slowLead + 27) % 28);
+      slowLead - 13);
     await wait(() => document.querySelector('#frame-time').hasAttribute('data-buffering'));
     assert.ok(primaryReads && fourthReads);
     await layout(1);
@@ -64,7 +64,7 @@ async function checkLayoutPlayback(page) {
     primary.release();
     // Keep the removed fourth request held until two verified single frames have actually painted.
     await wait(next => window.layoutFrames.some(f => f.count === 1 && f.rate === '2' && f.aligned && f.index === next),
-      (slowLead + 1) % 28);
+      slowLead - 11);
     assert.equal(primaryReads, 1, '切回单图重复读取了保留图层');
     const slowPair = await page.evaluate(() => window.layoutFrames.filter(f => f.count === 1 && f.rate === '2').slice(-2));
     const singleFrameMs = slowPair[1].at - slowPair[0].at;
@@ -90,7 +90,7 @@ async function checkLayoutPlayback(page) {
     await page.locator('#frame-slider').press('Home');
     await layout(4);
     await layout(1);
-    await wait(() => document.querySelector('.map-source').textContent.includes('12/10 08:00'));
+    await wait(() => document.querySelector('.map-source').textContent.includes('7/18 20:00'));
     await page.waitForTimeout(550);
     assert.equal(await frame(), 0);
     assert.equal(await page.locator('#play').getAttribute('aria-pressed'), 'false');

@@ -69,8 +69,8 @@ test('归档保留真实等压面掩膜，离线再分析、模式预报和站�
   }
   assert.ok(terrainCells > 100);
   const find = (id) => catalog.find((c) => c.id === id);
-  assert.equal(find('beijing-snow').run, '2023-12-10');
-  assert.ok(find('beijing-snow').earlyReport);
+  assert.equal(find('bohai').run, '2023-12-19');
+  assert.ok(find('henan-2021').outcomeSource);
   assert.equal(find('henan-2021').dataMode, undefined);
 });
 test('逐年灾害记录可追溯，指定事件均有地图回放', () => {
@@ -87,8 +87,7 @@ test('逐年灾害记录可追溯，指定事件均有地图回放', () => {
     assert.ok(e.fact && e.analysis && e.kind && e.title);
     assert.equal(new URL(e.source || archive.years[e.year].source).protocol, 'https:');
     if (e.extraSource) assert.equal(new URL(e.extraSource).protocol, 'https:');
-    if (e.replay) assert.ok(catalog.some((c) => c.id === e.replay));
+    for (const id of e.chapters||[]) assert.ok(catalog.some(c => c.id === id));
   }
-  for (const replay of ['ice-2008', 'cold-2016', 'henan-2021'])
-    assert.equal(archive.events.filter((e) => e.replay === replay).length, 1);
+  for (const c of catalog) assert.equal(archive.events.filter(e => e.chapters?.includes(c.id)).length,1);
 });
