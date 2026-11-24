@@ -11,7 +11,7 @@ export function availableLead(hour) {
 export function forecastTimes(run) {
   const start = new Date(run).getTime();
   const frames = [];
-  for (let hour = -18; hour <= forecastLimit; hour += hour < hourlyLimit ? 1 : 3)
+  for (let hour = -24; hour <= forecastLimit; hour += hour < hourlyLimit ? 1 : 3)
     frames.push(start + hour * HOUR);
   return frames;
 }

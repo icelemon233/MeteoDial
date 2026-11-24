@@ -1,6 +1,6 @@
 'use strict';
 const { cached, request } = require('./network.cjs');
-const { pressureLevels, heightLevels, profileLevels } = require('../shared/levels.mjs');
+const { pressureLevels, nativeHeightLevels, profileLevels } = require('../shared/levels.mjs');
 
 const googleGfs = { id: 'gfs-google', model: 'gfs', name: 'NOAA GFS', channel: 'NOAA 开放数据 · Google Cloud', resolution: '1p00' };
 const sources = [
@@ -37,12 +37,20 @@ const fields = {
   ],
   temp2: [['TMP', '2 m above ground']],
   q2: [['SPFH', '2 m above ground']],
-  dew2: [['DPT','2 m above ground']],
+  dew2: [['DPT', '2 m above ground']],
   pressure: [['PRMSL', 'mean sea level']],
   rainRate: [['PRATE', 'surface']],
   snowFlag: [['CSNOW', 'surface']],
   surfacePressure: [['PRES', 'surface']],
-  omega700: [['VVEL','700 mb']],
+  omega700: [['VVEL', '700 mb']],
+  precipTotal: [['APCP', 'surface']],
+  precipPhase: [
+    ['CRAIN', 'surface'],
+    ['CFRZR', 'surface'],
+    ['CICEP', 'surface'],
+    ['CSNOW', 'surface'],
+  ],
+  precipitableWater: [['PWAT', 'entire atmosphere (considered as a single layer)']],
 };
 for (const p of pressureLevels) {
   const level = p + ' mb';
@@ -52,8 +60,13 @@ for (const p of pressureLevels) {
   ];
   fields['temp' + p] = [['TMP', level]];
   fields['moisture' + p] = [['RH', level]];
+  fields['omega' + p] = [['VVEL', level]];
+  fields['q' + p] = [['SPFH', level]];
+  fields['specific' + p] = [['SPFH', level]];
+  fields['flux' + p] = [...fields['wind' + p], ['SPFH', level]];
+  fields['vort' + p] = fields['wind' + p];
 }
-for (const p of heightLevels) fields['height' + p] = [['HGT', p + ' mb']];
+for (const p of nativeHeightLevels) fields['height' + p] = [['HGT', p + ' mb']];
 for (const p of profileLevels) {
   fields['temp' + p] ??= [['TMP',p+' mb']];
   fields['q' + p] = [['SPFH',p+' mb']];
@@ -171,7 +184,10 @@ function parseIndex(text, source, run, lead) {
   )
     throw Error('NOAA 字段索引与请求不符');
   return rows.flatMap((r, i) => {
-    if (!(r[5] === lead + ' hour fcst' || (lead === 0 && r[5] === 'anl'))) return [];
+    const accum =
+      r[3] === 'APCP' && r[4] === 'surface' && r[5] === '0-' + lead + ' hour acc fcst' && lead > 0;
+    const instant = r[5] === lead + ' hour fcst' || (lead === 0 && r[5] === 'anl');
+    if (r[3] === 'APCP' ? !accum : !instant) return [];
     if (source.model === 'gefs' && !r.some((v) => v === 'ENS=low-res ctl')) return [];
     return [
       {
@@ -179,6 +195,7 @@ function parseIndex(text, source, run, lead) {
         level: r[4],
         at: Number(r[1]),
         end: i + 1 < rows.length ? Number(rows[i + 1][1]) - 1 : null,
+        ...(accum ? { startStep: 0, endStep: lead } : {}),
       },
     ];
   });
@@ -210,7 +227,7 @@ async function indexFor(source, run, lead, url) {
   const address = source.model === 'ifs' ? url.replace(/\.grib2$/, '.index') : url + '.idx';
   // A newly written index may still be growing; recheck gaps in a recent cycle.
   const ttl = Date.now() - new Date(run).getTime() < 864e5 ? 5 * 60000 : 7 * 864e5;
-  return cached('model-index-v1:' + address, ttl, async () => ({
+  return cached('model-index-v2:' + address, ttl, async () => ({
     value: await retryLater(address, async () =>
       parseIndex(
         await (await request(address, { timeout: 7500, preferSystem: true })).text(),

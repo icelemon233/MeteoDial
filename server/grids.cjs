@@ -13,6 +13,8 @@ const {
 const { fetchField } = require('./grib-field.cjs');
 const { liveDomain } = require('../shared/levels.mjs');
 const { availableLead } = require('../shared/timeline.mjs');
+const { phaseCode, waterFlux } = require('../shared/products.mjs');
+const { relativeVorticity } = require('./atmosphere.cjs');
 const HOUR = 3600000;
 const boxes = {
   asia: [55, 5, 165, 75],
@@ -137,8 +139,13 @@ async function readProviderGrid(
   const bbox = boxes[box],
     specs = fields[layer];
   if (!bbox || !specs) throw Error('未知图层');
-  if (source.model !== 'gfs' && ['rainRate', 'snowFlag'].includes(layer))
-    throw fieldError('该产品未接入同定义的瞬时降水字段');
+  if (source.model !== 'gfs' && ['rainRate', 'snowFlag','precipTotal','precipPhase'].includes(layer))
+    throw fieldError('该源未接入同定义的降水产品');
+  if(layer.startsWith('vort'))return relativeVorticity(await readProviderGrid(source,run,lead,layer.replace('vort','wind'),box,resolution,step));
+  if(layer==='precipTotal'&&!lead){
+    const g=await readProviderGrid(source,run,lead,'surfacePressure',box,resolution,step);
+    return {...g,layer,values:g.values.map(v=>v===null?null:0),intervalStart:g.run,intervalEnd:g.run,derived:'起报时累计窗口长度为零'};
+  }
   const url = gribAddress(source, run, lead, resolution);
   const pressureLevel = /^(\d+) mb$/.exec(specs[0][1]);
   const extent = box === 'asia' ? box : bbox.join(',');
@@ -167,6 +174,24 @@ async function readProviderGrid(
       for (let i = 0; i < surface.length; i++)
         if (surface[i] === null || terrainMask[i]) for (const a of arrays) a[i] = null;
     }
+    let values = arrays[0],
+      v = arrays[1],
+      extra = {};
+    if (layer === 'precipPhase') {
+      const cells = values.map((_, i) => phaseCode(arrays.map((a) => a[i])));
+      values = cells.map((c) => c.value);
+      v = undefined;
+      extra.phaseFlags = cells.map((c) => c.mask);
+    } else if (layer.startsWith('flux')) {
+      values = arrays[0].map((u, i) => waterFlux(arrays[2][i], u));
+      v = arrays[1].map((w, i) => waterFlux(arrays[2][i], w));
+      extra.derived = '同层比湿乘以水平风，再除以重力加速度，按每 hPa 表示';
+    } else if (layer.startsWith('specific'))
+      values = values.map((q) => (q == null || q < 0 ? null : q * 1000));
+    else if (layer === 'precipTotal') {
+      extra.intervalStart = new Date(run).toISOString();
+      extra.intervalEnd = new Date(new Date(run).getTime() + lead * HOUR).toISOString();
+    }
     return {
       value: {
         layer,
@@ -182,8 +207,9 @@ async function readProviderGrid(
         sourceId: source.id,
         channel: source.channel,
         resolution: resolution.replace('p', '.') + '°',
-        values: arrays[0],
-        v: arrays[1],
+        values,
+        v,
+        ...extra,
         terrainMask,
       },
     };

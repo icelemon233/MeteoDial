@@ -5,7 +5,8 @@ const { gunzipSync } = require('node:zlib');
 const { gridIndex, levelChoices, suitable } = require('../shared/levels.mjs');
 const { specs, extraGrid, referencePressure, coarseProfile, pointWeather } = require('./disaster-layers.cjs');
 const { archiveProfile, hasArchiveProfile } = require('./era5-column.cjs');
-const { describeProfile } = require('./atmosphere.cjs');
+const { waterFlux } = require('../shared/products.mjs');
+const { describeProfile, specificHumidity, relativeVorticity, divergence } = require('./atmosphere.cjs');
 const places = new Map(require('../assets/data/places.json').map((p) => [p[0], p]));
 const chapters = new Map(require('../assets/data/catalog.json').map((c) => [c.id, c]));
 const events = new Map(require('../assets/data/disasters.json').events.map((e) => [e.id, e]));
@@ -28,6 +29,39 @@ const { gridGeometry } = store;
 const readTable = (bytes, month) => store.readTable(bytes, month, magic);
 const readDay = (file, day) => store.readDay(file, day, components, 11);
 const loadDay = store.createStore(directory, magic, components, 11);
+const wideShape = () => ({ bbox: [10, 0, 180, 80], step: 2.5, nx: 69, ny: 33 });
+const wideDay = store.createStore(
+  path.join(__dirname, '../assets/cases/circulation'),
+  'MDEUR501',
+  ['height', 'terrain'],
+  1,
+  1,
+  wideShape,
+);
+async function circulation(stamp) {
+  const d = await wideDay(stamp),
+    slot = d.slots.indexOf(new Date(stamp).getUTCHours());
+  if (slot < 0) throw Error('没有收录该时次的欧亚环流');
+  const { nx, ny } = d.shape,
+    n = nx * ny,
+    offset = slot * n,
+    lead = d.leads[slot],
+    run = new Date(Date.parse(stamp) - lead * hour).toISOString();
+  const mask = d.fields.terrain.subarray(offset, offset + n),
+    z = d.fields.height.subarray(offset, offset + n);
+  return {
+    ...d.shape,
+    layer: 'heightWide500',
+    valid: stamp,
+    run,
+    lead,
+    resolution: stamp.slice(0, 7) >= '2026-01' ? '0.5°' : '2.5°',
+    source: cfsNameAt(run),
+    type: lead ? '归档短时预报' : '归档分析',
+    values: Array.from(z, (v, i) => (v === missing || mask[i] !== 0 ? null : v)),
+    terrainMask: Array.from(mask, (v) => Number(v === 1)),
+  };
+}
 function formatGrid(data, stamp, layer) {
   const t = Date.parse(stamp),
     slot = data.slots.indexOf(new Date(t).getUTCHours() / 4);
@@ -108,13 +142,57 @@ function locationFor(id, stamp, point) {
     throw Object.assign(Error('请选择全国格点覆盖内的位置'), { statusCode: 422 });
   return { xy, index: gridIndex(g, ...xy) };
 }
+async function humidityOrFlux(stamp, layer, p) {
+  const flux = layer.startsWith('flux');
+  const [t, rh, w] = await Promise.all([
+    fixedGrid(stamp, 'temp' + p),
+    fixedGrid(stamp, 'moisture' + p),
+    flux ? fixedGrid(stamp, 'wind' + p) : null,
+  ]);
+  const sources = [t, rh, ...(w ? [w] : [])];
+  if (
+    sources.some(
+      (g) =>
+        g.valid !== stamp ||
+        g.source !== t.source ||
+        g.nx !== t.nx ||
+        g.ny !== t.ny ||
+        g.step !== t.step ||
+        g.bbox.some((v, i) => v !== t.bbox[i]),
+    )
+  )
+    throw Error('诊断所需的同源同格点资料不全');
+  const mask = t.terrainMask.map((v, i) => Number(Boolean(v || rh.terrainMask[i] || w?.terrainMask[i])));
+  const q = t.values.map((v, i) => (mask[i] ? null : specificHumidity(p, v, rh.values[i])));
+  const runs = [...new Set(sources.map((g) => g.run))];
+  return {
+    ...t,
+    layer,
+    terrainMask: mask,
+    values: flux ? q.map((v, i) => waterFlux(v, w.values[i])) : q.map((v) => (v == null ? null : v * 1000)),
+    ...(flux ? { v: q.map((v, i) => waterFlux(v, w.v[i])) } : {}),
+    ...(runs.length > 1 ? { run: null, lead: null } : {}),
+    derived:
+      '按同层气温和相对湿度换算比湿' +
+      (flux ? '，并按水平风计算水汽输送' : '') +
+      '。各分量有效时刻相同，模式起报 ' +
+      runs.join('、'),
+  };
+}
 function fixedGrid(stamp, layer) {
+  if (layer === 'div850') return fixedGrid(stamp, 'wind850').then(divergence);
+  const diag = /^(specific|flux|vort)(850|700|500)$/.exec(layer);
+  if (diag)
+    return diag[1] === 'vort'
+      ? fixedGrid(stamp, 'wind' + diag[2]).then(relativeVorticity)
+      : humidityOrFlux(stamp, layer, Number(diag[2]));
   if (Object.hasOwn(specs, layer) || layer === 'div200') return extraGrid(stamp, layer);
   if (Object.hasOwn(layers, layer)) return loadDay(stamp).then((d) => formatGrid(d, stamp, layer));
   throw Object.assign(Error('请选择归档中已有的图层'), { statusCode: 400 });
 }
-async function disasterField(id, layer, rawTime, point) {
-  const stamp = eventStamp(id, rawTime);
+async function disasterField(id, layer, rawTime, point, chapter = null) {
+  const stamp = eventStamp(id, rawTime, layer === 'heightWide500' ? chapter : null);
+  if (layer === 'heightWide500') return circulation(stamp);
   if (!['autoTransport', 'autoMoisture', 'autoUpper', 'autoNear'].includes(layer)) {
     const g = await fixedGrid(stamp, layer),
       p = places.get(events.get(id).map.place),

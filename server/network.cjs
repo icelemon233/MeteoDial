@@ -35,8 +35,9 @@ async function request(url, options = {}) {
   try {
     res = await preferred(url, init());
   } catch (error) {
-    if (!systemFetch || preferred === systemFetch) throw error;
-    res = await systemFetch(url, init());
+    if (!systemFetch || !['GET','HEAD'].includes((rest.method||'GET').toUpperCase())) throw error;
+    const alternate=preferred===systemFetch?fetch:systemFetch;
+    res = await alternate(url, init());
   }
   if (!res.ok && !acceptErrorResponse) {
     await res.body?.cancel();

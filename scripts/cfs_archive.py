@@ -95,7 +95,9 @@ def needed_hours():
     return {h for e in events for h in event_hours(e)}
 
 
-def geometry(month, rain=False):
+def geometry(month, rain=False, domain="national"):
+    if domain == "eurasia":
+        return np.arange(10, 180.01, 2.5), np.arange(80, -0.01, -2.5)
     step = 1 if rain or month >= "2026-01" else 2.5
     west = 53 if step == 1 else 52.5
     return np.arange(west, 165.01, step), np.arange(75, -0.01, -step)
@@ -295,7 +297,7 @@ def dap_blocks(url, folder, prefix, names, spatial, blocks, parallel):
             yield from task.result()
 
 
-def download_file(cache, month, product, hours, parallel=1):
+def download_file(cache, month, product, hours, parallel=1, domain="national"):
     folder = cache / month
     folder.mkdir(parents=True, exist_ok=True)
     output = folder / (product + ".npz")
@@ -309,7 +311,7 @@ def download_file(cache, month, product, hours, parallel=1):
     groups = sorted({key[: -len(specs[0][1])] for key in variables if key.rsplit("/", 1)[-1] == specs[0][1]})
     if not groups:
         raise ValueError("Unavailable field " + product + " " + month)
-    x, y = geometry(month, product == "apcp")
+    x, y = geometry(month, product == "apcp", domain)
     values = {s[0]: {} for s in specs}
     refs = {}
     for n, group in enumerate(groups):
@@ -455,12 +457,19 @@ def main():
     parser.add_argument("--months", nargs="+")
     parser.add_argument("--products", nargs="+", choices=PRODUCTS)
     parser.add_argument("--reader", choices=("auto", "dap", "grib"), default="auto")
+    parser.add_argument("--domain", choices=("national", "eurasia"), default="national")
     args = parser.parse_args()
     if args.workers < 1:
         parser.error("workers must be positive")
+    times = needed_hours()
+    if args.domain == "eurasia":
+        args.cache = args.cache / "eurasia"
+        args.products = args.products or ["z500", "pressfc"]
+        for c in json.loads((ROOT / "assets/data/catalog.json").read_text(encoding="utf8")):
+            times.update(utc_hour(c["run"]) + lead for lead in c["leads"])
     jobs = [
         j
-        for j in jobs_for(needed_hours())
+        for j in jobs_for(times)
         if (not args.months or j[0] in args.months) and (not args.products or j[1] in args.products)
     ]
     errors = []
@@ -476,14 +485,14 @@ def main():
             try:
                 from cfs_grib import native_file
 
-                native_file(args.cache, *j, decoders=decoders)
+                native_file(args.cache, *j, decoders=decoders, domain=args.domain)
                 return
             except Exception as e:
                 if args.reader == "grib":
                     raise
                 print("Using DAP for", m, k, str(e), flush=True)
         batch_readers = min(3, max(1, args.workers // 4)) if m >= "2026-01" else 1
-        download_file(args.cache, *j, parallel=batch_readers)
+        download_file(args.cache, *j, parallel=batch_readers, domain=args.domain)
 
     # Give the larger high-resolution archive a share of the workers from
     # the start. Once either queue is empty, all workers can finish the other.

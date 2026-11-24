@@ -12,15 +12,16 @@ function gridGeometry(month, rain = false) {
     ny: Math.round(75 / step) + 1,
   };
 }
-function readTable(bytes, month, magic) {
+function readTable(bytes, month, magic, cadence = 4) {
   if (bytes.toString('ascii', 0, 8) !== magic) throw Error('历史格点文件标识不匹配');
   const offset = 12 + bytes.readUInt32LE(8);
   if (offset > bytes.length || offset > 65536) throw Error('历史格点目录长度无效');
   const table = JSON.parse(bytes.toString('ascii', 12, offset));
-  if (table.version !== 1 || table.cadence !== 4 || table.month !== month) throw Error('历史格点月份不匹配');
+  if (table.version !== 1 || table.cadence !== cadence || table.month !== month)
+    throw Error('历史格点月份不匹配');
   return { bytes, offset, table };
 }
-function readDay(file, day, components, leadCount) {
+function readDay(file, day, components, leadCount, geometry = gridGeometry) {
   const entry = file.table.days[day];
   if (!entry) throw Error('归档中没有所选日期');
   const [start, size, mask, checksum] = entry,
@@ -33,11 +34,11 @@ function readDay(file, day, components, leadCount) {
     end > file.bytes.length ||
     !Number.isInteger(mask) ||
     mask <= 0 ||
-    mask >= 64
+    mask >= 2 ** (24 / file.table.cadence)
   )
     throw Error('历史格点分块无效');
-  const slots = [0, 1, 2, 3, 4, 5].filter((i) => mask & (1 << i));
-  const shape = gridGeometry(file.table.month),
+  const slots = Array.from({ length: 24 / file.table.cadence }, (_, i) => i).filter((i) => mask & (1 << i));
+  const shape = geometry(file.table.month),
     rain = gridGeometry(file.table.month, true);
   const cells = components.reduce(
     (sum, key) => sum + (key === 'rain' ? rain.nx * rain.ny : shape.nx * shape.ny),
@@ -81,7 +82,7 @@ function retain(cache, key, load, limit) {
   if (cache.size > limit) cache.delete(cache.keys().next().value);
   return entry;
 }
-function createStore(directory, magic, components, leadCount) {
+function createStore(directory, magic, components, leadCount, cadence = 4, geometry = gridGeometry) {
   const monthCache = new Map(),
     dayCache = new Map();
   function loadDay(stamp) {
@@ -94,10 +95,11 @@ function createStore(directory, magic, components, leadCount) {
         const file = await retain(
           monthCache,
           month,
-          async () => readTable(await fs.readFile(path.join(directory, month + '.bin')), month, magic),
+          async () =>
+            readTable(await fs.readFile(path.join(directory, month + '.bin')), month, magic, cadence),
           2,
         );
-        return readDay(file, day, components, leadCount);
+        return readDay(file, day, components, leadCount, geometry);
       },
       4,
     );

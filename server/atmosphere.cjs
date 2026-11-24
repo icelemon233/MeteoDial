@@ -195,7 +195,43 @@ function divergence(wind) {
     }
   }
   const { v: unused, ...grid } = wind;
-  return { ...grid, layer: 'div200', values: out, derived: '由同时次 200 hPa 水平风在球面格网上计算' };
+  const p = (wind.layer || 'wind200').slice(4);
+  return { ...grid, layer: 'div' + p, values: out, derived: '由同时次 ' + p + ' hPa 水平风在球面格网上计算' };
 }
 
-module.exports = { relativeHumidity, specificHumidity, wetBulb, makeProfile, describeProfile, divergence };
+function relativeVorticity(wind) {
+  const { nx, ny, step, bbox, values: u, v } = wind,
+    values = Array(nx * ny).fill(null),
+    rad = Math.PI / 180,
+    d = step * rad;
+  for (let y = 1; y < ny - 1; y++) {
+    const lat = (bbox[3] - y * step) * rad,
+      cos = Math.cos(lat);
+    if (Math.abs(cos) < 0.01) continue;
+    for (let x = 1; x < nx - 1; x++) {
+      const i = y * nx + x;
+      if (![u[i], v[i], v[i + 1], v[i - 1], u[i - nx], u[i + nx]].every(Number.isFinite)) continue;
+      values[i] = round(
+        (1e5 * (v[i + 1] - v[i - 1] - u[i - nx] * Math.cos(lat + d) + u[i + nx] * Math.cos(lat - d))) /
+          (2 * d * 6371000 * cos),
+        2,
+      );
+    }
+  }
+  const { v: discard, ...g } = wind;
+  return {
+    ...g,
+    layer: wind.layer.replace('wind', 'vort'),
+    values,
+    derived: '相对涡度，由同层水平风的球面差分计算',
+  };
+}
+module.exports = {
+  relativeHumidity,
+  specificHumidity,
+  wetBulb,
+  makeProfile,
+  describeProfile,
+  divergence,
+  relativeVorticity,
+};

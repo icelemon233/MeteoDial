@@ -48,7 +48,10 @@ function fieldName(layer) {
         : layer.startsWith('temp')
           ? '气温'
           : '相对湿度';
-    return level + ' hPa ' + variable;
+    const extra = { omega: '垂直速度', vort: '相对涡度', specific: '比湿', flux: '水汽通量' }[
+      layer.slice(0, -level.length)
+    ];
+    return level + ' hPa ' + (extra || variable);
   }
   return (
     {
@@ -95,7 +98,7 @@ async function resolveLiveGrid(
             g.values.length !== g.nx * g.ny
           )
             throw Error('模式网格或时次不匹配');
-          if (layer.startsWith('wind') && (!Array.isArray(g.v) || g.v.length !== g.values.length))
+          if (/^(wind|flux)/.test(layer) && (!Array.isArray(g.v) || g.v.length !== g.values.length))
             throw fieldError('风场缺少分量');
           if (fields[layer][0][1].endsWith(' mb') && g.terrainMask?.length !== g.values.length)
             throw fieldError('缺少有效地形遮挡');

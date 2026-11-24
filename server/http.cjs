@@ -11,7 +11,15 @@ const {divergence}=require('./atmosphere.cjs');
 const { automaticLayers, liveDomain, levelChoices } = require('../shared/levels.mjs');
 const { availableLead } = require('../shared/timeline.mjs');
 const { configureCache, pruneCache, request } = require('./network.cjs');
-const { satellite, satelliteTimes, cyclones, radar, radarIndex } = require('./sky.cjs');
+const {
+  satellite,
+  satelliteTimes,
+  cyclones,
+  listCyclones,
+  cyclone,
+  radar,
+  radarIndex,
+} = require('./sky.cjs');
 const { productTimes, productImage } = require('./cma-products.cjs');
 const { warnings } = require('./cma-warnings.cjs');
 const { cityWeather } = require('./cma-city.cjs');
@@ -32,6 +40,12 @@ const mime = {
 const H = 36e5;
 async function api(url) {
   const q = url.searchParams;
+  const satelliteArgs = () => [
+    q.get('channel') || 'satellite',
+    q.get('region') || 'china',
+    Number(q.get('lon') ?? 105),
+    Number(q.get('lat') ?? 33),
+  ];
   switch (url.pathname) {
     case '/api/forecast':
       return forecast(q.get('id'));
@@ -56,22 +70,29 @@ async function api(url) {
         run > Date.now() ||
         Date.now() - run > 6 * 864e5 ||
         !availableLead(lead) ||
-        (profile ? (cell===null||cell<0) : !(Object.hasOwn(fields, layer) || Object.hasOwn(automaticLayers, layer)||layer==='div200')) ||
-        (rawCell !== null &&
-          (!/^(?:-1|0|[1-9]\d*)$/.test(rawCell) || cell >= liveDomain.nx * liveDomain.ny))
+        (profile
+          ? cell === null || cell < 0
+          : !(
+              Object.hasOwn(fields, layer) ||
+              Object.hasOwn(automaticLayers, layer) ||
+              ['div200', 'div850'].includes(layer)
+            )) ||
+        (rawCell !== null && (!/^(?:-1|0|[1-9]\d*)$/.test(rawCell) || cell >= liveDomain.nx * liveDomain.ny))
       )
         throw Object.assign(Error('请选择有效的预报图层、选点和时次'), { statusCode: 400 });
       if(profile)return liveProfile(run,lead,cell);
-      if(layer==='div200')return divergence(await resolveLiveGrid(run,lead,'wind200',cell));
+      if(['div200','div850'].includes(layer))return divergence(await resolveLiveGrid(run,lead,'wind'+layer.slice(3),cell));
       return resolveLiveGrid(run, lead, layer, cell);
     }
     case '/api/satellite': {
       const t = Date.parse(q.get('time'));
       if (!Number.isFinite(t)) throw Error('无效时刻');
-      return satellite(t, q.get('region') || 'jpn', q.get('fallback'));
+      return satellite(t, ...satelliteArgs());
     }
     case '/api/satellite-times':
-      return satelliteTimes();
+      return satelliteTimes(...satelliteArgs());
+    case '/api/typhoons': return listCyclones();
+    case '/api/typhoon': return cyclone(q.get('id'));
     case '/api/cyclones':
       return cyclones();
     case '/api/radar-times':
@@ -105,6 +126,8 @@ const routes = new Set([
   '/api/satellite',
   '/api/satellite-times',
   '/api/cyclones',
+  '/api/typhoons',
+  '/api/typhoon',
   '/api/radar-times',
   '/api/radar',
   '/api/cma-times',
@@ -134,7 +157,7 @@ function matchesLiveGrid(grid, query) {
   const valid = run + Number(query.get('lead')) * H;
   if (
     !grid?.sourceId ||
-    !(Object.hasOwn(fields, grid.layer) || grid.layer==='div200') ||
+    !(Object.hasOwn(fields, grid.layer) || ['div200', 'div850'].includes(grid.layer)) ||
     Date.parse(grid.run) !== run ||
     Date.parse(grid.valid) !== valid ||
     grid.nx !== liveDomain.nx ||
@@ -146,15 +169,30 @@ function matchesLiveGrid(grid, query) {
     grid.values.length !== grid.nx * grid.ny
   )
     return false;
-  if (grid.layer.startsWith('wind') && grid.v?.length !== grid.values.length) return false;
-  if ((grid.layer==='div200'||fields[grid.layer][0][1].endsWith(' mb')) && grid.terrainMask?.length !== grid.values.length)
+  if (/^(wind|flux)/.test(grid.layer) && grid.v?.length !== grid.values.length) return false;
+  if (
+    (['div200', 'div850'].includes(grid.layer) || fields[grid.layer][0][1].endsWith(' mb')) &&
+    grid.terrainMask?.length !== grid.values.length
+  )
     return false;
   return Object.hasOwn(automaticLayers, choice)
     ? grid.autoRole === choice && levelChoices(choice, grid.selectionPressure).includes(grid.layer)
     : grid.layer === choice;
 }
 async function forwarded(remote, url) {
-  if(url.pathname==='/api/profile')return api(url);
+  if (
+    [
+      '/api/profile',
+      '/api/satellite',
+      '/api/satellite-times',
+      '/api/radar',
+      '/api/radar-times',
+      '/api/typhoons',
+      '/api/typhoon',
+      '/api/cyclones',
+    ].includes(url.pathname)
+  )
+    return api(url);
   const live = url.pathname.startsWith('/api/cma-') || url.pathname === '/api/grid' || url.pathname === '/api/run' ||
     url.pathname === '/api/satellite-times' || (url.pathname === '/api/satellite' && url.searchParams.get('region') === 'china');
   try {
@@ -227,7 +265,7 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         const field=url.pathname==='/local/disaster-profile'
           ? await disasterProfile(q.get('id'),q.get('time'),xy,q.get('detail')==='full',q.get('section'))
           : url.pathname==='/local/disaster-point'?await disasterPoint(q.get('id'),q.get('time'),xy)
-          : await disasterField(q.get('id'),q.get('layer'),q.get('time'),xy);
+          : await disasterField(q.get('id'),q.get('layer'),q.get('time'),xy,q.get('section'));
         if (res.destroyed) return;
         res.writeHead(200,{'Content-Type':mime['.json'],'Cache-Control':'private, max-age=3600'});
         return res.end(JSON.stringify(field));
@@ -274,7 +312,7 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
       );
       if (
         !(
-          rel === 'shared/levels.mjs' || rel === 'shared/timeline.mjs' ||
+          /^shared\/(?:levels|timeline|satellite|products)\.mjs$/.test(rel) ||
           /^(ui\/|assets\/(?:data\/|cases\/|brand\/app-icon-(?:32|256)\.png$|icon\.ico$))/.test(rel)
         ) ||
         rel.includes('..') ||
@@ -284,8 +322,11 @@ async function startServer(cacheDir, port = 0, { upstream = null } = {}) {
         res.writeHead(404);
         return res.end();
       }
-      const compressed = /^assets\/cases\/(?:disasters|gauge-days)\/[\w-]+\.json\.gz$/.test(rel);
-      const ext = compressed ? '.json' : path.extname(rel);
+      const compressed =
+        /^assets\/(?:cases\/(?:disasters|gauge-days)\/[\w-]+\.json|cases\/henan-clouds\/\d{4}\.bin|data\/(?:typhoons\/\d{4}|relief-contours)\.json)\.gz$/.test(
+          rel,
+        );
+      const ext = path.extname(compressed ? rel.slice(0, -3) : rel);
       if (!mime[ext]) {
         res.writeHead(404);
         return res.end();

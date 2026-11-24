@@ -26,6 +26,7 @@ export async function showDisasters(env, id) {
   const filters = new URLSearchParams(params);
   filters.delete('time');
   filters.delete('section');
+  filters.delete('evidence');
   const filterSuffix = filters.size ? '?' + filters : '';
   if (id) {
     const event = data.events.find(e => e.id === id || e.chapters?.includes(id));
@@ -49,7 +50,9 @@ export async function showDisasters(env, id) {
       if (time) q.set('time',time);
       return base+(q.size?'?'+q:'');
     };
-    history.replaceState(null,'',link(chapter?.id,params.get('time')));
+    const target = new URL(link(chapter?.id, params.get('time')).slice(1), location.origin);
+    if (params.has('evidence')) target.searchParams.set('evidence', params.get('evidence'));
+    history.replaceState(null, '', '#' + target.pathname + target.search);
     main.innerHTML='<p class="loading" role="status">读取过程天气图…</p>';
     let analysis;
     if (chapter) analysis={...chapter};
@@ -58,6 +61,26 @@ export async function showDisasters(env, id) {
       if (!ctx.active) return;
       analysis=overview(event,bundle,byId.get(event.map.place),detailLink);
     }
+    analysis.layers = [
+      ...new Set([
+        ...analysis.layers,
+        'heightWide500',
+        ...(analysis.atlas
+          ? [
+              'div850',
+              'specific850',
+              'specific700',
+              'specific500',
+              'flux850',
+              'flux700',
+              'flux500',
+              'vort850',
+              'vort700',
+              'vort500',
+            ]
+          : []),
+      ]),
+    ];
     analysis.event=event;
     analysis.report=detailLink;
     analysis.reportName=event.sourceTitle||year.label;

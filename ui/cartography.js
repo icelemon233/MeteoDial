@@ -1,4 +1,4 @@
-import { layerUnit } from './base.js';
+import { layerUnit, validText } from './base.js';
 import { gridIndex } from './levels.js';
 let geography;
 let uiTypeface;
@@ -105,12 +105,66 @@ const palettes = {
   ],
 };
 function palette(layer) {
-  if(layer==='omega700')return [[-1,[39,101,146]],[-0.3,[91,165,183]],[0,[195,199,191]],[0.3,[199,157,103]],[1,[149,94,74]]];
-  if(layer==='div200')return [[-8,[136,88,116]],[-2,[186,144,156]],[0,[194,199,190]],[2,[112,165,174]],[8,[40,108,145]]];
+  if (layer === 'cloudTopTemperature')
+    return [
+      [-85, [254, 250, 252]],
+      [-70, [213, 223, 236]],
+      [-50, [160, 173, 189]],
+      [-30, [97, 112, 126]],
+      [0, [52, 62, 70]],
+      [35, [20, 26, 30]],
+    ];
+  if (layer === 'precipPhase')
+    return [
+      [0, [46, 63, 77]],
+      [1, [91, 169, 124]],
+      [2, [205, 102, 149]],
+      [3, [184, 146, 212]],
+      [4, [154, 206, 235]],
+      [5, [219, 171, 97]],
+    ];
+  if (layer === 'radar')
+    return [
+      [-10, [47, 66, 84]],
+      [5, [79, 139, 163]],
+      [20, [73, 173, 128]],
+      [35, [216, 198, 89]],
+      [50, [218, 117, 76]],
+      [65, [176, 70, 131]],
+      [75, [226, 173, 225]],
+    ];
+  if (layer === 'precipTotal') return palettes.rainDay;
+  if (layer === 'precipitableWater' || layer.startsWith('specific') || layer.startsWith('flux')) {
+    const max = layer === 'precipitableWater' ? 80 : layer.startsWith('specific') ? 24 : 3;
+    return palettes.rh.map(([v, rgb]) => [(v / 100) * max, rgb]);
+  }
+  if (layer.startsWith('omega'))
+    return [
+      [-1, [39, 101, 146]],
+      [-0.3, [91, 165, 183]],
+      [0, [195, 199, 191]],
+      [0.3, [199, 157, 103]],
+      [1, [149, 94, 74]],
+    ];
+  if (layer.startsWith('div') || layer.startsWith('vort'))
+    return [
+      [-8, [136, 88, 116]],
+      [-2, [186, 144, 156]],
+      [0, [194, 199, 190]],
+      [2, [112, 165, 174]],
+      [8, [40, 108, 145]],
+    ];
   if (layer === 'rainDay') return palettes.rainDay;
   if (layer === 'rain4h') return palettes.rain4h;
-  if (['height700','height400','height300','height200'].includes(layer)) {
-    const offset = {height700:-2520,height400:1650,height300:3650,height200:6300}[layer];
+  if (['height925', 'height850', 'height700', 'height400', 'height300', 'height200'].includes(layer)) {
+    const offset = {
+      height925: -4870,
+      height850: -4190,
+      height700: -2520,
+      height400: 1650,
+      height300: 3650,
+      height200: 6300,
+    }[layer];
     return palettes.height.map(([value, rgb]) => [value + offset, rgb]);
   }
   if (layer.startsWith('temp') && Number(layer.slice(4)) >= 200) {
@@ -123,7 +177,7 @@ function palette(layer) {
     ? palettes.wind
     : layer.startsWith('temp')
       ? palettes.temp
-      : layer === 'height500'
+      : layer.startsWith('height')
         ? palettes.height
         : layer.startsWith('moisture')
           ? palettes.rh
@@ -216,6 +270,7 @@ export function sample(g, lon, lat) {
   return {
     value: scalar(g, k),
     belowGround: Boolean(g.terrainMask?.[k]),
+    phaseMask: g.phaseFlags?.[k],
     u: g.values[k],
     v: g.v?.[k],
     lon: g.bbox[0] + x * g.step,
@@ -428,7 +483,7 @@ function windLines(f, g, quick) {
       const steps = quick ? 5 : 8 + Math.floor(rand * 7);
       for (let p = 0; p < steps; p++) {
         const s = sample(g, lon(xx), lat(yy));
-        if (!s || s.value < 0.4) break;
+        if (!Number.isFinite(s?.value) || s.value < (g.layer.startsWith('flux') ? 0.035 : 0.4)) break;
         const lx = (s.u / Math.max(0.3, Math.cos((lat(yy) * Math.PI) / 180))) * (f.x(1) - f.x(0)),
           ly = s.v * (f.y(1) - f.y(0)),
           mag = Math.hypot(lx, ly);
@@ -456,8 +511,17 @@ function windLines(f, g, quick) {
   }
 }
 function contours(f, g, bbox) {
-  const inc =
-    g.layer.startsWith('height') ? 40 : g.layer.startsWith('temp') ? 4 : g.layer.startsWith('moisture') ? 15 : g.layer==='omega700'?0.2:g.layer==='div200'?2:4;
+  const inc = g.layer.startsWith('height')
+    ? 40
+    : g.layer.startsWith('temp')
+      ? 4
+      : g.layer.startsWith('moisture')
+        ? 15
+        : g.layer.startsWith('omega')
+          ? 0.2
+          : g.layer.startsWith('div') || g.layer.startsWith('vort')
+            ? 2
+            : 4;
   const { ctx, x, y } = f;
   ctx.beginPath();
   ctx.strokeStyle = 'rgba(247,250,242,.57)';
@@ -496,7 +560,7 @@ function contours(f, g, bbox) {
         for (let n = 1; n < hit.length; n += 2) {
           ctx.moveTo(...hit[n - 1]);
           ctx.lineTo(...hit[n]);
-          if (g.layer === 'height500' && level === 5880) {
+          if (g.layer.startsWith('height') && level === 5880) {
             highlight.moveTo(...hit[n - 1]);
             highlight.lineTo(...hit[n]);
           }
@@ -618,7 +682,11 @@ function drawTrack(f, track, valid) {
     ]) {
       ctx.setLineDash(predicted ? [5, 5] : []);
       ctx.beginPath();
-      list.forEach((p, i) => (i ? ctx.lineTo(x(p.lon), y(p.lat)) : ctx.moveTo(x(p.lon), y(p.lat))));
+      list.forEach((p, i) =>
+        i && Math.abs(p.lon - list[i - 1].lon) < 180
+          ? ctx.lineTo(x(p.lon), y(p.lat))
+          : ctx.moveTo(x(p.lon), y(p.lat)),
+      );
       ctx.strokeStyle = predicted ? '#f1debe' : '#ffce85';
       ctx.lineWidth = 2.2;
       ctx.stroke();
@@ -631,7 +699,14 @@ function drawTrack(f, track, valid) {
       }
     }
     const last = pts.at(-1);
-    if (last) markers(f, [last.lon, last.lat], s.name, null, false);
+    if (last)
+      markers(
+        f,
+        [last.lon, last.lat],
+        s.labelFixTime ? s.name + ' · ' + validText(last.time) + ' 定位' : s.name,
+        null,
+        false,
+      );
   }
 }
 function zonal(f, g) {
@@ -672,17 +747,76 @@ export async function prepareMapData(data, { zonal = false } = {}) {
   ]);
   return { geography, image };
 }
+let relief;
+function loadRelief() {
+  return (relief ||= fetch('/assets/data/relief-contours.json.gz')
+    .then((r) => {
+      if (!r.ok) throw Error('地形等高线读取失败');
+      return r.json();
+    })
+    .catch((e) => {
+      relief = null;
+      throw e;
+    }));
+}
+function drawRelief(f, terrain) {
+  const { x, y, bbox: b, ctx } = f;
+  const local = b[2] - b[0] < 28 && b[0] < 118 && b[2] > 109 && b[1] < 39 && b[3] > 30;
+  const lines = terrain[local ? 'henan' : 'asia'].lines,
+    labels = new Map();
+  ctx.save();
+  for (const [lev, l, s, r, n, pts] of lines) {
+    if (r < b[0] || l > b[2] || n < b[1] || s > b[3]) continue;
+    ctx.beginPath();
+    ctx.moveTo(x(pts[0]), y(pts[1]));
+    for (let i = 2; i < pts.length; i += 2) ctx.lineTo(x(pts[i]), y(pts[i + 1]));
+    ctx.strokeStyle = 'rgba(40,25,15,.82)';
+    ctx.lineWidth = lev >= 1000 ? 2.7 : 2;
+    ctx.stroke();
+    ctx.strokeStyle = lev >= 1000 ? '#f5c981' : '#e6d6ae';
+    ctx.lineWidth = lev >= 1000 ? 1.3 : 0.8;
+    ctx.stroke();
+    if (pts.length < 32 || labels.has(lev)) continue;
+    const mid = Math.floor(pts.length / 4) * 2,
+      px = x(pts[mid]),
+      py = y(pts[mid + 1]);
+    if (
+      px > 55 &&
+      px < f.w - 58 &&
+      py > 23 &&
+      py < f.h - 30 &&
+      ![...labels.values()].some(([a, b]) => Math.abs(px - a) < 70 && Math.abs(py - b) < 20)
+    )
+      labels.set(lev, [px, py]);
+  }
+  ctx.font = mapFont('10px');
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#3d342c';
+  ctx.fillStyle = '#ffe6b1';
+  for (const [lev, [px, py]] of labels) {
+    const name = '海拔 ' + lev + ' m';
+    ctx.strokeText(name, px, py);
+    ctx.fillText(name, px, py);
+  }
+  ctx.restore();
+}
 export async function drawMap(canvas, data, options = {}) {
   const token = Symbol();
   canvas.paintToken = token;
-  const { geography, image } = await prepareMapData(data, options);
+  const [{ geography, image }, terrain] = await Promise.all([
+    prepareMapData(data, options),
+    options.terrain && !data?.externalImage ? loadRelief() : null,
+  ]);
   const requested = options.bbox || data?.bbox || nationalView;
   function render(detail) {
     if (canvas.paintToken !== token || !canvas.isConnected) return null;
     const f = frame(canvas, requested, !options.zonal && !data?.externalImage, options.quick);
     if (!f) return null;
-    try { paint(f, data, options, geography, image, detail); }
-    finally { f.ctx.restore(); }
+    try {
+      paint(f, data, options, geography, image, detail, terrain);
+    } finally {
+      f.ctx.restore();
+    }
     return f.bbox;
   }
   const detail = images.get(data?.detailImage)?.image;
@@ -694,7 +828,7 @@ export async function drawMap(canvas, data, options = {}) {
   }
   return Boolean(view);
 }
-function paint(f, data, options, geography, img, detail) {
+function paint(f, data, options, geography, img, detail, terrain) {
   const { ctx, w, h, x, y, bbox } = f;
   ctx.fillStyle = '#203c54';
   ctx.fillRect(0, 0, w, h);
@@ -707,8 +841,10 @@ function paint(f, data, options, geography, img, detail) {
       step = data.step;
     const xx = x(b[0] - step / 2),
       yy = y(b[3] + step / 2);
-    const raster = texture(data), width = x(b[2] + step / 2) - xx, height = y(b[1] - step / 2) - yy;
-    ctx.imageSmoothingEnabled = true;
+    const raster = texture(data),
+      width = x(b[2] + step / 2) - xx,
+      height = y(b[1] - step / 2) - yy;
+    ctx.imageSmoothingEnabled = data.layer !== 'precipPhase';
     ctx.drawImage(raster.field, xx, yy, width, height);
     if (raster.coverage) {
       ctx.imageSmoothingEnabled = false;
@@ -723,7 +859,7 @@ function paint(f, data, options, geography, img, detail) {
         (w - img.width * scale) / 2,
         (h - img.height * scale) / 2,
         img.width * scale,
-        img.height * scale
+        img.height * scale,
       );
       return;
     }
@@ -737,14 +873,24 @@ function paint(f, data, options, geography, img, detail) {
     ctx.fillRect(0, 0, w, h);
   }
   const basemap = basemapFor(f, geography, !options.firstLook);
-  if (!data?.values && !img) { ctx.fillStyle = '#496473'; ctx.fill(basemap.land, 'evenodd'); }
+  if (!data?.values && !img) {
+    ctx.fillStyle = '#496473';
+    ctx.fill(basemap.land, 'evenodd');
+  }
   ctx.drawImage(basemap.base, 0, 0, w, h);
+  if (terrain) drawRelief(f, terrain);
   let contourLabels = [];
   if (data?.v) windLines(f, data, options.quick);
-  else if (data?.values && !options.quick) contourLabels = contours(f, data, bbox);
+  else if (
+    data?.values &&
+    !['precipPhase', 'cloudTopTemperature', 'radar'].includes(data.layer) &&
+    !options.quick
+  )
+    contourLabels = contours(f, data, bbox);
   ctx.drawImage(basemap.border, 0, 0, w, h);
   ctx.lineJoin = ctx.lineCap = 'round';
   if (data?.storms) drawTrack(f, data, data.valid || new Date().toISOString());
+  if (options.storms) drawTrack(f, { storms: options.storms }, data?.valid);
   if (options.firstLook) return;
   const occupied = markers(f, options.point, options.tag, options.annotation, options.cities !== false);
   labelContours(ctx, contourLabels, occupied);

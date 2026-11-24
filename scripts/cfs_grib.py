@@ -252,7 +252,7 @@ def grib_file(selected):
             ec.codes_grib_multi_support_reset_file(stream)
 
 
-def native_file(cache, month, product, hours, decoders=None):
+def native_file(cache, month, product, hours, decoders=None, domain="national"):
     folder = cache / month
     folder.mkdir(parents=True, exist_ok=True)
     output = folder / (product + ".npz")
@@ -277,14 +277,14 @@ def native_file(cache, month, product, hours, decoders=None):
     if selected is None:
         selected = get_bulk(url, folder / filename, size)
     if decoders is None:
-        decode_file(selected, output, month, product, hours)
+        decode_file(selected, output, month, product, hours, domain)
     else:
-        decoders.submit(decode_file, selected, output, month, product, hours).result()
+        decoders.submit(decode_file, selected, output, month, product, hours, domain).result()
 
 
-def decode_file(selected, output, month, product, hours):
+def decode_file(selected, output, month, product, hours, domain="national"):
     specs = {PARAMS[key]: (key, level, scale, add) for key, _, level, _, scale, add in PRODUCTS[product]}
-    x, y = geometry(month, product == "apcp")
+    x, y = geometry(month, product == "apcp", domain)
     geo = {}
     values = {k: {} for k, *_ in PRODUCTS[product]}
     refs = {}

@@ -69,8 +69,14 @@ test('播放切换图数复用进行中的请求，只预读可见图层的下�
 
 test('实时预报前120小时逐小时，后期只选原始三小时时效', () => {
   const hours = forecastTimes(run).map(t => (t - start) / H);
-  assert.deepEqual(hours.slice(0, 139), Array.from({length: 139}, (_, i) => i - 18));
-  assert.deepEqual(hours.slice(139), Array.from({length: 40}, (_, i) => 123 + 3 * i));
+  assert.deepEqual(
+    hours.slice(0, 145),
+    Array.from({ length: 145 }, (_, i) => i - 24),
+  );
+  assert.deepEqual(
+    hours.slice(145),
+    Array.from({ length: 40 }, (_, i) => 123 + 3 * i),
+  );
   for (const h of [0, 1, 2, 119, 120, 123, 237, 240]) {
     assert.equal(availableLead(h), true);
     assert.deepEqual(forecastFrame(run, start + h * H), {run, lead: h});

@@ -1,6 +1,6 @@
 {
   "name": "meteodial",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "MeteoDial · 观象 — 全国区县预报、天气图与天气过程回放",
   "author": "Cinna",
   "main": "desktop/main.cjs",
@@ -18,7 +18,10 @@
   "dependencies": {
     "@meri-imperiumi/eccodes-wasm": "2.48.2",
     "classic-level": "3.0.0",
-    "numcodecs": "0.3.2"
+    "jpeg-js": "0.4.4",
+    "numcodecs": "0.3.2",
+    "pngjs": "7.0.0",
+    "proj4": "2.19.10"
   },
   "devDependencies": {
     "electron": "45.3.4",
@@ -38,6 +41,8 @@
       "server/**/*",
       "shared/levels.mjs",
       "shared/timeline.mjs",
+      "shared/products.mjs",
+      "shared/satellite.mjs",
       "ui/**/*",
       "assets/data/**/*",
       "assets/cases/**/*",
@@ -52,6 +57,14 @@
     ],
     "asar": true,
     "asarUnpack": [
+      "server/satellite-render.cjs",
+      "server/radar-decode.cjs",
+      "shared/satellite.mjs",
+      "node_modules/jpeg-js/**/*",
+      "node_modules/proj4/**/*",
+      "node_modules/wkt-parser/**/*",
+      "node_modules/mgrs/**/*",
+      "assets/cases/circulation/*.bin",
       "assets/cases/disaster-fields/*.bin",
       "assets/cases/disaster-columns/*.bin",
       "assets/cases/disaster-analysis-fields/*.bin",

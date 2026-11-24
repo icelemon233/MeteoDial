@@ -21,7 +21,8 @@ export const windDir = (d) =>
 export const $ = (q, el = document) => el.querySelector(q);
 export const $$ = (q, el = document) => [...el.querySelectorAll(q)];
 const paths = {
-  settings: '<path d="m10 3 .5-1h3l.5 2 2 1 2-.5 1.5 2.6-1.2 1.6v2.5l1.2 1.6-1.5 2.6-2-.5-2 1-.5 2h-3l-.5-2-2-1-2 .5-1.5-2.6 1.2-1.6v-2.5L4.5 7.6 6 5l2 .5 2-1z" transform="translate(0 2)"/><circle cx="12" cy="12" r="3"/>',
+  settings:
+    '<path d="m10 3 .5-1h3l.5 2 2 1 2-.5 1.5 2.6-1.2 1.6v2.5l1.2 1.6-1.5 2.6-2-.5-2 1-.5 2h-3l-.5-2-2-1-2 .5-1.5-2.6 1.2-1.6v-2.5L4.5 7.6 6 5l2 .5 2-1z" transform="translate(0 2)"/><circle cx="12" cy="12" r="3"/>',
   fix: '<path d="m15 3 6 6-3 1-4 4v3l-2 2-7-7 2-2h3l4-4zM9 15l-6 6"/>',
   unpin: '<path d="m3 3 18 18M9 15l-6 6M14 5l1-2 6 6-3 1-1 1M6 10l-1 2 7 7 2-2v-2"/>',
   tray: '<path d="M12 2v12m-5-5 5 5 5-5M4 16v4h16v-4"/>',
@@ -38,6 +39,8 @@ const paths = {
   right: '<path d="m9 5 7 7-7 7"/>',
   down: '<path d="m5 9 7 7 7-7"/>',
   refresh: '<path d="M20 9a8 8 0 1 0 0 6M20 3v6h-6"/>',
+  cyclone:
+    '<path d="M20 4c-5-2-10 1-11 6m-5 10c6 2 10-1 11-6"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/>',
   wind: '<path d="M3 8h11a3 3 0 1 0-2.7-4.2M2 12h17a2.5 2.5 0 1 0-2.3-3.5M4 16h9a3 3 0 1 1-2.8 4"/>',
   drop: '<path d="M12 2C10 6 5 11 5 15a7 7 0 0 0 14 0c0-4-5-9-7-13Z"/>',
   gauge: '<path d="M3.5 17a9 9 0 1 1 17 0H3.5ZM12 14l4-5M6 13h1m3-6 .5 1m7 5h1"/>',
@@ -56,8 +59,7 @@ const paths = {
   minus: '<path d="M4 12h16"/>',
   focus: '<circle cx="12" cy="12" r="6"/><path d="M12 1v5m0 12v5M1 12h5m12 0h5"/>',
   eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="2.5"/>',
-  globe:
-    '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4.5" ry="9"/><path d="M3 12h18"/>',
+  globe: '<circle cx="12" cy="12" r="9"/><ellipse cx="12" cy="12" rx="4.5" ry="9"/><path d="M3 12h18"/>',
   check: '<path d="m4 12 5 5L20 6"/>',
   temp: '<path d="M9 14.5V5a3 3 0 1 1 6 0v9.5a5 5 0 1 1-6 0ZM12 7v9"/>',
   cross: '<path d="m2 18 7-9 4 5 4-8 5 12H2Z"/>',
@@ -153,7 +155,8 @@ export function safeLink(url, text) {
         '</a>'
     : '';
 }
-import { automaticLayers, pressureLevels,heightLevels } from './levels.js';
+import { automaticLayers, pressureLevels, nativeHeightLevels } from '../shared/levels.mjs';
+import { satelliteChannels } from '../shared/satellite.mjs';
 export const layerNames = {
   ...automaticLayers,
   wind10: '离地 10 米风场',
@@ -188,12 +191,20 @@ export const layerUnit = {
   zonal: 'hPa',
 };
 for (const level of pressureLevels) {
-  for (const [variable, name, unit] of [['wind', '风场', 'm/s'], ['temp', '气温', '℃'], ['moisture', '相对湿度', '%']]) {
+  for (const [variable, name, unit] of [
+    ['wind', '风场', 'm/s'],
+    ['temp', '气温', '℃'],
+    ['moisture', '相对湿度', '%'],
+    ['omega', '垂直速度（ω）', 'Pa/s'],
+    ['vort', '相对涡度', '10⁻⁵ s⁻¹'],
+    ['specific', '比湿', 'g/kg'],
+    ['flux', '水汽通量', 'kg/(m·s·hPa)'],
+  ]) {
     layerNames[variable + level] = level + ' hPa ' + name;
     layerUnit[variable + level] = unit;
   }
 }
-for (const level of heightLevels) {
+for (const level of nativeHeightLevels) {
   layerNames['height' + level] = level + ' hPa 位势高度';
   layerUnit['height' + level] = 'm';
 }
@@ -201,5 +212,25 @@ layerNames.rainRate = '预报降水率';
 layerNames.omega700='700 hPa 垂直速度（ω）';
 layerUnit.omega700='Pa/s';
 layerNames.div200='200 hPa 水平散度';
+layerNames.div850 = '850 hPa 水平散度';
+layerUnit.div850 = '10⁻⁵ s⁻¹';
 layerUnit.div200='10⁻⁵ s⁻¹';
 layerUnit.rainRate = 'mm/h';
+
+Object.assign(layerNames, {
+  heightWide500: '欧亚及西太平洋 · 500 hPa 位势高度',
+  precipTotal: '起报以来累计降水量',
+  precipPhase: '近地降水相态',
+  precipitableWater: '整层可降水量',
+  cloudTopTemperature: 'B13 红外亮温',
+  cmaRadar: '中央气象台雷达 · 全国及各站',
+});
+Object.assign(layerUnit, {
+  heightWide500: 'm',
+  radar: 'dBZ',
+  precipTotal: 'mm',
+  precipPhase: '',
+  precipitableWater: 'mm',
+  cloudTopTemperature: '℃',
+});
+for (const [key, c] of Object.entries(satelliteChannels)) layerNames[key] = '葵花9号 · ' + c.label;

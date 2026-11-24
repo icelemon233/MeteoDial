@@ -5,7 +5,10 @@ export const automaticLayers = {
   autoNear: '近地层风场 · 自动选层',
 };
 export const pressureLevels = [925, 850, 700, 600, 500, 400, 300, 200];
-export const heightLevels = [700, 500, 400, 300, 200];
+// The map picker exposes the standard reading levels. Other native levels
+// remain available for terrain-aware selection and for data requests.
+export const heightLevels = [925,850,700,500,300];
+export const nativeHeightLevels = [...new Set([...pressureLevels,1000,975,950,900,800,750,650,550,450,350,250,150,100])];
 export const profileLevels = [
   1000, 975, 950, 925, 900, 850, 800, 750, 700, 650, 600, 550, 500, 450, 400, 350, 300,
 ];

@@ -1080,3 +1080,36 @@ dialog::backdrop {
   position: sticky;
   top: 0;
 }
+
+.model-time,.cloud-notes,.storm-fix,.storm-details p,.evidence-caption{color:var(--muted);font-size:13px}
+.model-time:empty,.time-jumps[hidden],.sat-region[hidden],.storm-filters [hidden]{display:none}
+.sat-region,.storm-filters select,.storm-time select,.cloud-controls select{max-width:100%;background:var(--surface);color:var(--text);border:1px solid var(--line);border-radius:6px;min-height:32px;padding:4px 28px 4px 9px}
+.time-jumps,.evidence-actions,.storm-filters,.storm-time,.cloud-controls{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.time-jumps{justify-content:flex-end;margin:-5px 0 12px;gap:16px}
+.time-jumps button{background:transparent;border:0;font:inherit;font-size:12px;cursor:pointer}
+.time-jumps button:before,.phase-key:before{content:'';width:8px;height:8px;display:inline-block;margin-right:5px;border-radius:2px;background:var(--phase,var(--accent))}
+.time-jumps .now:before,.cycle-mark.now{background:#bd8246}
+.cycle-mark{position:absolute;top:0;height:11px;width:3px;background:var(--accent);pointer-events:none}
+.phase-key{white-space:nowrap}
+.color-scale:has(.phase-key){flex-wrap:wrap;gap:4px 7px;font-size:11px}
+.case-lesson{padding:16px 20px;margin:12px 0 16px}
+.case-lesson h2,.reading-main h3{font-size:16px;margin:0 0 5px}
+.case-lesson p,.reading-main p{line-height:1.65}
+.case-lesson p{margin:0 0 12px}
+.case-lesson .evidence-caption{margin:10px 0 0}
+.evidence-actions{gap:6px}.evidence-actions button[aria-pressed=true],.terrain-toggle.on{color:var(--accent);border-color:var(--accent)}
+.storm-filters{margin-bottom:8px}.storm-map{overflow:hidden}.storm-map canvas,.cloud-observation canvas{width:100%;display:block;aspect-ratio:16/9}
+.storm-fix{padding:9px 14px}.storm-time{margin:12px 0}.storm-time select{margin-left:8px}
+.storm-details table{width:100%;text-align:left;border-collapse:collapse}.storm-details td,.storm-details th{padding:6px;border-bottom:1px solid var(--line)}
+.cloud-controls input{flex:1 1 100px;min-width:0}
+.cloud-clock{margin:10px 0}
+.cloud-notes{margin:10px 0 0;line-height:1.6}
+dialog:has(.cloud-observation){width:min(900px,92vw);max-height:calc(100dvh - 32px)}
+#dialog-body:has(.cloud-observation){
+  display:flex;
+  flex-direction:column;
+  max-height:calc(100dvh - 34px);
+}
+.cloud-observation{display:flex;flex-direction:column;min-width:0;min-height:0}
+.cloud-observation canvas{min-height:120px}
+.cloud-clock,.cloud-notes,.cloud-controls,#dialog-body:has(.cloud-observation) .modal-head{flex-shrink:0}

@@ -29,6 +29,11 @@ import { markEventTime,atmosphere } from './disaster-analysis.js';
 import { showGaugeReference } from './gauge-reference.js';
 import {pressureGuide,selectionNote} from './pressure-guides.js';
 import {showProfile} from './pressure-profile.js';
+import { satelliteChannels, satelliteRegions, satelliteBounds } from '../shared/satellite.mjs';
+import { caseLesson } from './case-lessons.js';
+import { showHenanClouds } from './event-clouds.js';
+import { bestTrack } from './typhoons.js';
+import { phaseNames, phasesFromFlags } from '../shared/products.mjs';
 import {gridIndex,liveDomain} from '../shared/levels.mjs';
 const memo = new Map();
 function cachedResource(url) {
@@ -60,15 +65,25 @@ function resource(url, group) {
   return entry.promise;
 }
 const liveGroups = {
-  '随选点与时次选层': Object.keys(automaticLayers),
-  '地面与降水': ['wind10', 'temp2', 'pressure', 'rainRate'],
-  '位势高度': heightLevels.map(p=>'height'+p),
-  '垂直运动与散度': ['omega700','div200'],
-  '定压风场': pressureLevels.map((p) => 'wind' + p),
-  '定压气温': pressureLevels.map((p) => 'temp' + p),
-  '定压湿度': pressureLevels.map((p) => 'moisture' + p),
-  '中央气象台': ['cmaRadar','cmaChart','cmaSatellite'],
-  '观测': ['satellite', 'radar', 'track'],
+  随选点与时次选层: Object.keys(automaticLayers),
+  地面与降水: ['wind10', 'temp2', 'pressure', 'rainRate', 'precipTotal', 'precipPhase'],
+  '动力场 · 位势高度': heightLevels.map((p) => 'height' + p),
+  '动力场 · 水平风': pressureLevels.map((p) => 'wind' + p),
+  '动力场 · 垂直速度、涡度与散度': [
+    ...pressureLevels.map((p) => 'omega' + p),
+    ...pressureLevels.map((p) => 'vort' + p),
+    'div850',
+    'div200',
+  ],
+  '热力与水汽 · 气温': pressureLevels.map((p) => 'temp' + p),
+  '热力与水汽 · 湿度': [
+    'precipitableWater',
+    ...pressureLevels.map((p) => 'moisture' + p),
+    ...pressureLevels.map((p) => 'specific' + p),
+  ],
+  '热力与水汽 · 水汽通量': pressureLevels.map((p) => 'flux' + p),
+  中央气象台: ['cmaRadar', 'cmaChart', 'cmaSatellite'],
+  卫星与区域雷达: [...Object.keys(satelliteChannels), 'radar'],
 };
 function caseDate(c, frames) {
   if (!frames.length) return c.period || c.run.replaceAll('-', '.');
@@ -88,6 +103,16 @@ function timesFor(c) {
   return c.leads.map(n=>Date.parse(c.run + 'T00:00:00Z') + n * HOUR);
 }
 function caseFrameUrl(c, layer, time, xy=c.point) {
+  if (layer === 'heightWide500')
+    return (
+      '/local/disaster-field?' +
+      new URLSearchParams({
+        id: c.event.id,
+        layer,
+        time: new Date(time).toISOString(),
+        ...(!c.atlas ? { section: c.id } : {}),
+      })
+    );
   if (c.atlas) {
     const q=new URLSearchParams({id:c.id,layer,time:new Date(time).toISOString()});
     if(Object.hasOwn(automaticLayers,layer)&&xy){q.set('lon',xy[0]);q.set('lat',xy[1]);}
@@ -100,9 +125,13 @@ function caseFrameUrl(c, layer, time, xy=c.point) {
   return folder + layer + '-' + lead + '.json';
 }
 async function caseFrame(c, layer, time, group,xy=c.point) {
-  if (c.atlas) {
-    const field=await resource(caseFrameUrl(c,layer,time,xy),group);
-    if ((Object.hasOwn(automaticLayers,layer)?field.autoRole!==layer:field.layer!==layer) || Date.parse(field.valid)!==time) throw Error('历史格点与所选时次或图层不符');
+  if (c.atlas || layer === 'heightWide500') {
+    const field = await resource(caseFrameUrl(c, layer, time, xy), group);
+    if (
+      (Object.hasOwn(automaticLayers, layer) ? field.autoRole !== layer : field.layer !== layer) ||
+      Date.parse(field.valid) !== time
+    )
+      throw Error('历史格点与所选时次或图层不符');
     return field;
   }
   if (layer === 'satellite') {
@@ -149,6 +178,28 @@ const guides = {
   zonal: '对同一纬度的各经度取平均，比较纬向平均气压的高值和低值。',
 };
 function guideFor(layer) {
+  if (satelliteChannels[layer])
+    return {
+      satellite: '红外亮度描出云顶和地表的辐射特征，可连续追踪夜间云系。',
+      satVisible: '可见光反映太阳光的反射，白天可辨认云纹和云带边缘。',
+      satColor: '红绿蓝通道合成接近人眼所见的白天景象，便于辨认云、海陆与尘烟。',
+      satVapor: 'B08 主要反映对流层上部的水汽和云顶，干湿带可显示高空环流。',
+    }[layer];
+  if (layer === 'precipTotal') return '从本次模式起报累加至图头的有效时刻，跨起报周期会重新计数。';
+  if (layer === 'precipPhase')
+    return '颜色表示模式判断的近地雨、雪、冻雨或冰粒。点读混合格点可查看同时出现的相态信号。';
+  if (layer === 'precipitableWater')
+    return '把单位面积空气柱中的水汽全部凝结，所得水深就是可降水量。实际雨量还受水汽补给和抬升影响。';
+  if (layer.startsWith('specific'))
+    return '比湿表示每千克湿空气含多少克水汽。比较同层上游和下游，可追踪湿空气的来源。';
+  if (layer.startsWith('flux'))
+    return '箭头表示水汽随风输送的方向，颜色同时计入风速和比湿。强输送带的末端若伴随抬升，水汽更易凝结。';
+  if (layer === 'div850')
+    return '负散度表示周围气流从水平方向汇入。把辐合区与负 ω 的上升区对照，留意两者是否重合。';
+  if (layer.startsWith('vort'))
+    return '北半球正相对涡度表示气旋性旋转。沿时间轴追踪正值中心，并用同层风场核对旋转方向。';
+  if (layer.startsWith('omega'))
+    return '气压坐标的垂直速度以 Pa/s 表示，负值表示上升。结合湿度可判断上升区是否容易形成云雨。';
   const explanation=pressureGuide(layer);
   if(explanation)return explanation;
   if (guides[layer]) return guides[layer];
@@ -159,11 +210,17 @@ function guideFor(layer) {
   return '';
 }
 export async function showMaps({ main, ctx, place, params }, c) {
+  const lesson = c?.event ? caseLesson(c) : null;
   const available = c?.layers;
   const defaults = c?.defaults || ['autoUpper', 'autoTransport','autoMoisture','temp2'];
   const choices = [...new Set([...defaults, ...(available || ['temp2', 'pressure'])])];
   const layers = Array.from({ length: 4 }, (_, i) => choices[i % choices.length]);
-  const forecastLayers=layers.slice();
+  const forecastLayers = layers.slice(),
+    observationLayers = ['radar-chinaall', 'radar-huabei', 'radar-huadong', 'radar-huanan'];
+  let satRegion = 'local',
+    terrainOn = false,
+    caseStorms = null;
+
   const chosenPanels=new Set();
   let frames = c ? timesFor(c) : [],
     index = c ? Math.floor(c.leads?.length / 2 || 0) : 0;
@@ -205,13 +262,37 @@ export async function showMaps({ main, ctx, place, params }, c) {
   const panels = [];
   const baseJobs = new WeakMap();
   const visibleLayers = () => layers.slice(0, panels.length);
-  const isObservation = layer => cmaProducts.has(layer)||['satellite','radar','track'].includes(layer);
+  const isSatellite = (k) => Object.hasOwn(satelliteChannels, k);
+  const isObservation = (k) => cmaProducts.has(k) || isSatellite(k) || k === 'radar';
   const hasObservation = () => visibleLayers().some(isObservation);
-  function observationSource() {
-    const visible = visibleLayers();
-    if (visible.some(key=>cmaProducts.has(key)))
-      return [...new Set(visible.filter(key=>isObservation(key)&&key!=='track'))].sort().join('|');
-    return visible.includes('radar') ? 'radar' : visible.includes('satellite') ? 'satellite' : null;
+  const observationSource = () => [...new Set(visibleLayers().filter(isObservation))].sort().join('|');
+  const satelliteParams = (k) =>
+    new URLSearchParams({ channel: k, region: satRegion, lon: point[0], lat: point[1] });
+  function activateGroup(observe) {
+    const selected = observe ? observationLayers : forecastLayers;
+    for (let i = 0; i < layers.length; i++) {
+      layers[i] = selected[i];
+      if (panels[i]) reflectLayer(panels[i], layers[i]);
+    }
+  }
+  function chooseArea() {
+    if (c) return;
+    const satellite = visibleLayers().some(isSatellite),
+      taiwan = visibleLayers().includes('radar');
+    regionPick.hidden = !satellite;
+    bbox = satellite
+      ? satelliteBounds(satRegion, ...point)
+      : taiwan
+        ? [114.5, 17.7, 127, 29.3]
+        : [...originalBox];
+    $('.atlas-region', main).lastChild.textContent = satellite
+      ? satRegion === 'local'
+        ? place[1]
+        : satelliteRegions[satRegion].name
+      : taiwan
+        ? '台湾及近海'
+        : '全国';
+    viewRevision++;
   }
   const sections=c?.sections ? '<nav class="event-sections" aria-label="事件分析视角">'+c.sections.map(s=>'<a href="'+escape(s.href)+'"'+(s.active?' aria-current="page"':'')+'>'+escape(s.label)+'</a>').join('')+'</nav>' : '';
   const layouts = [[1, '单图'], [2, '双图'], [4, '四图']];
@@ -220,8 +301,122 @@ export async function showMaps({ main, ctx, place, params }, c) {
     <div class="map-grid" data-count="1"></div>
     <div class="timeline panel"><button id="play" aria-label="播放时间轴" aria-pressed="false">${icon('play', 17)}</button><button class="iconbtn" id="prev-frame" aria-label="上一时次">${icon('left', 16)}</button><div class="timeline-track"><input id="frame-slider" type="range" aria-label="地图有效时刻" min="0" max="0" value="0"><span class="time-preview" aria-hidden="true"></span><div class="time-ruler" id="time-ticks" aria-hidden="true"></div></div><button class="iconbtn" id="next-frame" aria-label="下一时次">${icon('right', 16)}</button><select id="playback-rate" aria-label="播放速度" title="播放速度">${playbackRates.map(rate => '<option value="' + rate + '">' + rate + '×</option>').join('')}</select></div>
     <div id="reading"></div>`;
+  const intro = document.createElement('section');
+  intro.className = 'case-lesson panel';
+  if (lesson) {
+    intro.innerHTML =
+      '<h2>发生了什么</h2><p>' +
+      escape(c.event.fact) +
+      '</p><h2>' +
+      (lesson.background ? '这类天气怎样形成' : '为什么会发生') +
+      '</h2><p>' +
+      escape(lesson.why) +
+      '</p><div class="evidence-actions" aria-label="在天气图上验证"></div><p class="evidence-caption" hidden></p>';
+    const row = $('.evidence-actions', intro);
+    lesson.steps.forEach((step, i) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'btn';
+      b.textContent = step.label;
+      b.dataset.evidence = String(i);
+      b.onclick = () => void applyEvidence(i);
+      row.append(b);
+    });
+    $('.map-heading', main).before(intro);
+  }
+  async function applyEvidence(i) {
+    const step = lesson?.steps[i];
+    if (!step || !ctx.active) return;
+    if (step.section && (step.section === 'overview' ? !c.atlas : c.id !== step.section)) {
+      const q = new URLSearchParams(params);
+      q.set('time', new Date(step.time).toISOString());
+      q.set('evidence', i);
+      if (step.section === 'overview') q.delete('section');
+      else q.set('section', step.section);
+      location.hash = '/cases/' + c.event.id + '?' + q;
+      return;
+    }
+    stop();
+    timePinned = true;
+    const selected = ++modeRevision;
+    for (const b of intro.querySelectorAll('button'))
+      b.setAttribute('aria-pressed', String(Number(b.dataset.evidence) === i));
+    const caption = $('.evidence-caption', intro);
+    caption.hidden = false;
+    caption.textContent = step.text;
+    if (step.cloud) {
+      showHenanClouds(ctx, step.time);
+      return;
+    }
+    cursor = step.point || c.point;
+    terrain(!!step.terrain);
+    bbox = clampView(step.bbox || bbox);
+    caseStorms = null;
+    if (step.storm) {
+      try {
+        const year = await resource('/assets/data/typhoons/2021.json.gz'),
+          record = year.find((x) => x.id === '2106');
+        if (!ctx.active || modeRevision !== selected) return;
+        const s = bestTrack(record);
+        s.name = '烟花';
+        s.labelFixTime = true;
+        caseStorms = [s];
+      } catch {
+        if (ctx.active && modeRevision === selected) caption.textContent += ' 台风定位暂缺。';
+      }
+    }
+    if (!ctx.active || modeRevision !== selected) return;
+    if (step.layers) {
+      const selectedLayers = step.layers.filter((key) => available.includes(key));
+      const n = selectedLayers.length >= 3 ? 4 : selectedLayers.length >= 2 ? 2 : 1;
+      if (selectedLayers.length === 3)
+        selectedLayers.push(available.find((k) => !selectedLayers.includes(k)));
+      selectedLayers.forEach((key, idx) => {
+        layers[idx] = key;
+        chosenPanels.add(idx);
+      });
+      setPanels(n);
+      panels.forEach((p, j) => reflectLayer(p, layers[j]));
+    }
+    index = nearestFrame(frames, step.time);
+    controls(index);
+    repaint();
+    await refresh(index);
+    if (!ctx.active || modeRevision !== selected) return;
+    if (step.profile) profileButton.click();
+  }
   const grid = $('.map-grid', main);
   const frameTime = $('#frame-time', main);
+  const regionPick = document.createElement('select');
+  regionPick.hidden = true;
+  regionPick.className = 'sat-region';
+  regionPick.setAttribute('aria-label', '卫星云图区域');
+  for (const [key, r] of Object.entries(satelliteRegions))
+    regionPick.add(new Option(key === 'local' ? '所在地 · ' + place[1] : r.name, key));
+  frameTime.after(regionPick);
+  regionPick.onchange = () => {
+    satRegion = regionPick.value;
+    chooseArea();
+    void setMode(true);
+  };
+  const terrainButton = document.createElement('button');
+  terrainButton.className = 'btn terrain-toggle';
+  terrainButton.textContent = '地形等高线';
+  terrainButton.setAttribute('aria-pressed', 'false');
+  if (c) $('.zoom', main).before(terrainButton);
+  function terrain(value) {
+    terrainOn = value;
+    terrainButton.setAttribute('aria-pressed', String(value));
+    terrainButton.classList.toggle('on', value);
+    terrainButton.title = '海拔 200、500、1,000、2,000、4,000 米';
+  }
+  terrainButton.onclick = () => {
+    terrain(!terrainOn);
+    repaint();
+  };
+  const modelMeta = document.createElement('span');
+  modelMeta.className = 'model-time';
+  frameTime.after(modelMeta);
   const profileButton=document.createElement('button');
   profileButton.type='button';profileButton.className='btn profile-open';profileButton.textContent='温湿廓线';
   profileButton.disabled=true;profileButton.title='查看选点的气温、湿球温度与雨雪层结';
@@ -353,8 +548,16 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     const count=keys.length>=4?4:2;
     setPanels(count);
-    keys.slice(0,count).forEach((key,i)=>{layers[i]=key;chosenPanels.add(i);reflectLayer(panels[i],key);});
-    if(chart)void setMode(true);else void refreshView();
+    keys.slice(0, count).forEach((key, i) => {
+      layers[i] = key;
+      if (!c) (chart ? observationLayers : forecastLayers)[i] = key;
+      chosenPanels.add(i);
+      reflectLayer(panels[i], key);
+    });
+    if (chart) {
+      chooseArea();
+      void setMode(true);
+    } else void refreshView();
   };
   const slider = $('#frame-slider');
   const ruler = $('#time-ticks'), preview = $('.time-preview', main);
@@ -371,6 +574,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
         if (!chosenPanels.has(i)) layers[i]=peers.find(key=>!layers.slice(0,i).includes(key));
       }
     }
+    if (!c && observing) for (let i = 0; i < count; i++) observationLayers[i] = layers[i];
     setPanels(Number(btn.dataset.count));
     if (observing && before !== observationSource()) void setMode(hasObservation());
     else if (playing && activeStep) {
@@ -385,15 +589,61 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const i = panels.indexOf(e.target.closest('.map-panel'));
     const before = observationSource();
     chosenPanels.add(i);
-    layers[i] = cmaDefaults[e.target.value]||e.target.value;
-    if (!c&&!isObservation(layers[i])) forecastLayers[i]=layers[i];
-    reflectLayer(panels[i],layers[i]);
-    if (!c && ((!observing && hasObservation()) || (observing && (before !== observationSource() || !hasObservation()))))
-      void setMode(hasObservation());
-    else void refreshView();
+    const key = cmaDefaults[e.target.value] || e.target.value;
+    if (c) {
+      layers[i] = key;
+      reflectLayer(panels[i], key);
+      if (key === 'heightWide500') {
+        bbox = [25, 14, 166, 74];
+        repaint();
+      }
+      void refreshView();
+      return;
+    }
+    const observe = isObservation(key);
+    (observe ? observationLayers : forecastLayers)[i] = key;
+    if (observe !== observing) activateGroup(observe);
+    else {
+      layers[i] = key;
+      reflectLayer(panels[i], key);
+    }
+    if (observe !== observing || (observe && before !== observationSource())) {
+      chooseArea();
+      void setMode(observe);
+    } else void refreshView();
   };
+  function modelFrameType(init, valid) {
+    if (Date.parse(init) === valid) return valid < Date.parse(run) ? '历史模式分析' : '起报分析';
+    return valid < Date.now() ? '过去预报回放' : '模式预报';
+  }
   function frameLabel(t) {
     return validText(t);
+  }
+  const jumps = document.createElement('div');
+  jumps.className = 'time-jumps';
+  jumps.hidden = true;
+  timeline.after(jumps);
+  function paintTicks() {
+    drawTimeRuler(ruler, frames, stops, rulerWidth);
+    jumps.replaceChildren();
+    jumps.hidden = Boolean(c || observing || !run || !frames.length);
+    if (jumps.hidden) return;
+    for (const [kind, label, t] of [
+      ['run', '本批起报', Date.parse(run)],
+      ['now', '距现在最近', Date.now()],
+    ]) {
+      const i = nearestFrame(frames, t),
+        bar = document.createElement('i');
+      bar.className = 'cycle-mark ' + kind;
+      bar.style.left = (100 * stops[i]) / stops.at(-1) + '%';
+      ruler.append(bar);
+      const btn = document.createElement('button');
+      btn.className = 'textlink ' + kind;
+      btn.type = 'button';
+      btn.textContent = label + ' ' + validText(frames[i]);
+      btn.onclick = () => seek(i, false);
+      jumps.append(btn);
+    }
   }
   function updateTicks() {
     stops = frameStops(frames);
@@ -407,31 +657,32 @@ export async function showMaps({ main, ctx, place, params }, c) {
       return;
     }
     controls(index);
-    if (rulerWidth) drawTimeRuler(ruler, frames, stops, rulerWidth);
+    if (rulerWidth) paintTicks();
   }
   async function setMode(observe,latest=false) {
     clearSeekStatus();
     const modeVersion = ++modeRevision;
     const requested = frames[index] ?? shownTime ?? (Number.isFinite(requestedTime) ? requestedTime : Date.now());
     const source = observe ? observationSource() : null;
-    const cmaClock = observe && visibleLayers().some(key=>cmaProducts.has(key));
-    if (refreshTimes) refreshTimes.hidden=!cmaClock;
+    if (refreshTimes) refreshTimes.hidden = !observe;
     const wasObserving=observing;
-    observationError=null;
+    observationError = null;
     delayedProducts.clear();
-    if (cmaClock) {
-      frames=[]; index=0;
-      shownTime=null; frameTime.textContent='';
-      panels.forEach((p,i)=>{ clearPanel(p,i);p.classList.remove('has-basemap'); });
-    } else if (observe && !observing) {
-      const last = Math.floor((Date.now() - 30 * 60000) / (10 * 60000)) * 10 * 60000;
-      frames = Array.from({ length: 19 }, (_, i) => last - (18 - i) * 10 * 60000);
-      if (timePinned && !frames.includes(requested)) frames = [...frames, requested].sort((a, b) => a - b);
-      index = timePinned ? frames.indexOf(requested) : frames.length - 1;
-    } else if (!observe && observing) {
-      frames = forecastFrames;
-      index = frames.length ? nearestFrame(frames, requested) : 0;
-    }
+    revision++;
+    playSession++;
+    resetPlayback();
+    discardScrub();
+    frameLoad?.abort();
+    frames = observe ? [] : forecastFrames;
+    index = frames.length ? nearestFrame(frames, requested) : 0;
+    shownTime = null;
+    frameTime.textContent = '';
+    modelMeta.textContent = '';
+    jumps.hidden = true;
+    panels.forEach((p, i) => {
+      clearPanel(p, i);
+      p.classList.remove('has-basemap');
+    });
     observing = observe;
     joint.title=observe?'对照同一分析时次的地面和等压面原图':'并排查看环流形势、输送层风、湿度和近地气温';
     for (const el of $$('.mode-tabs button')) {
@@ -441,39 +692,28 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     updateTicks();
     if (source) {
-      playSession++;
-      revision++;
-      resetPlayback();
-      discardScrub();
-      frameLoad?.abort();
-      if (cmaClock) {
-        showPending(visibleLayers(),'读取观测时次…');
-        try {
-          const published=await sharedObservationTimes(source.split('|'),url=>get(url,ctx.signal));
-          if (!ctx.active||modeVersion!==modeRevision||source!==observationSource()) return;
-          frames=published.times;
-          delayedProducts=published.delayed;
-          index=!latest && (timePinned || (wasObserving&&frames.includes(requested))) ? nearestFrame(frames,requested) : frames.length-1;
-          updateTicks();
-        } catch (e) {
-          if (!ctx.active||modeVersion!==modeRevision||source!==observationSource()) return;
-          observationError=e;
-          stop(); await refreshView(); return;
-        }
-        void refreshView();
-        return;
-      }
-      if (timePinned) void refresh();
-      else showPending(visibleLayers(), '读取可用时次…');
-      const info = await get('/api/' + source + '-times', ctx.signal).catch(() => null);
-      if (!ctx.active || modeVersion !== modeRevision || source !== observationSource()) return;
-      const available = [...new Set((info?.frames || []).map(f => Date.parse(f.time)).filter(Number.isFinite))]
-        .sort((a, b) => a - b).slice(-19);
-      if (available.length) {
-        frames = timePinned && !available.includes(requested)
-          ? [...available, requested].sort((a, b) => a - b) : available;
-        index = timePinned ? frames.indexOf(requested) : frames.length - 1;
+      showPending(visibleLayers(), '读取已发布的观测时次…');
+      try {
+        const published = await sharedObservationTimes(
+          source.split('|'),
+          (url) => get(url, ctx.signal),
+          (key) =>
+            isSatellite(key) ? '/api/satellite-times?' + satelliteParams(key) : '/api/' + key + '-times',
+        );
+        if (!ctx.active || modeVersion !== modeRevision || source !== observationSource()) return;
+        frames = published.times;
+        delayedProducts = published.delayed;
+        index =
+          !latest && (timePinned || (wasObserving && frames.includes(requested)))
+            ? nearestFrame(frames, requested)
+            : frames.length - 1;
         updateTicks();
+      } catch (e) {
+        if (!ctx.active || modeVersion !== modeRevision) return;
+        observationError = e;
+        stop();
+        await refreshView();
+        return;
       }
     }
     void refreshView();
@@ -484,16 +724,9 @@ export async function showMaps({ main, ctx, place, params }, c) {
       const btn = e.target.closest('[data-mode]');
       if (!btn) return;
       const observe = btn.dataset.mode === 'observation';
-      if (observe && !observing && !hasObservation()) {
-        layers[0] = 'satellite';
-        reflectLayer(panels[0],layers[0]);
-      } else if (!observe && observing) {
-        for (let i=0;i<layers.length;i++) {
-          if (!isObservation(layers[i])) continue;
-          layers[i]=forecastLayers[i];
-          if (panels[i]) reflectLayer(panels[i],layers[i]);
-        }
-      }
+      if (observe === observing) return;
+      activateGroup(observe);
+      chooseArea();
       void setMode(observe);
     };
   function renderReading() {
@@ -531,9 +764,20 @@ export async function showMaps({ main, ctx, place, params }, c) {
         return '看图上的有效范围和 dBZ 色标，再逐帧观察回波的移动。图像覆盖台湾及邻近海域。';
       if (l === 'rainRate')
         return '颜色表示模式预计的瞬时降水率，单位为毫米每小时。比较前后时次，看降水区的位置如何移动。';
-      if((l==='omega700'||l==='div200')&&Number.isFinite(v?.value)){
-        return (cursor?'选点':place[1])+'附近的'+layerNames[l]+'为 '+fmtNum(v.value,l==='omega700'?3:2)+' '+layerUnit[l]+'。'+guideFor(l);
+      if ((l.startsWith('omega') || l.startsWith('div')) && Number.isFinite(v?.value)) {
+        return (
+          (cursor ? '选点' : place[1]) +
+          '附近的' +
+          layerNames[l] +
+          '为 ' +
+          fmtNum(v.value, l.startsWith('omega') ? 3 : 2) +
+          ' ' +
+          layerUnit[l] +
+          '。' +
+          guideFor(l)
+        );
       }
+      if (l.startsWith('flux')) return guideFor(l);
       if (g?.v && v?.value != null) {
         const direction = ((Math.atan2(-v.u, -v.v) * 180) / Math.PI + 360) % 360;
         return (
@@ -553,14 +797,48 @@ export async function showMaps({ main, ctx, place, params }, c) {
       [c.link!==c.report&&c.report?c.link:null,'专题资料'],[c.event?.extraSource,'过程核查资料'],[c.event?.map.source,'时段核查资料'],...(c.dataLinks||[])] : [];
     const seen=new Set();
     const sources=links.filter(([url])=>url&&!seen.has(url)&&seen.add(url)).map(([url,label])=>safeLink(url,label)).join(' ');
-    const evidence=c ? '<div class="case-evidence"><h3>过程与影响</h3><p>'+escape(c.atlas?c.outcome:c.event?.fact||c.outcome)+'</p><h3>'+
-      (c.atlas?'图上读数':c.dataMode==='reanalysis'?'再分析回看':'当时的预报')+'</h3><p>'+escape(c.forecast)+'</p>'+(c.evidenceCurve||'')+
-      (c.atlas?'<button type="button" class="textlink gauge-reference">雨量站日累计对照</button>':'')+
-      (!c.atlas&&c.event&&c.outcome!==c.event.fact?'<p>'+escape(c.outcome)+'</p>':'')+'<details class="event-sources"><summary>资料来源</summary>'+
-      (c.method?'<p>'+escape(c.method)+'</p>':'')+sources+'</details></div>' : '';
-    el.innerHTML = '<section class="reading panel"><div class="reading-main"><h2>'+icon('book',18)+(c?'怎样读这次过程':'怎样读天气图')+'</h2>'+
-      (c?c.guides:[...new Set(reading)]).map((s,i)=>'<p class="step"><b>'+(i+1)+'</b>'+
-        (c?.atlas&&i===1?'<span class="atmosphere-reading">'+escape(s)+'</span>':escape(s))+'</p>').join('')+compare+'</div>'+evidence+'</section>'+(c?.cross?principle(c.cross):'');
+    const evidence = c
+      ? '<div class="case-evidence"><h3>' +
+        (c.atlas ? '图上读数' : c.dataMode === 'reanalysis' ? '再分析回看' : '当时的预报') +
+        '</h3><p>' +
+        escape(c.forecast) +
+        '</p>' +
+        (c.evidenceCurve || '') +
+        (c.atlas ? '<button type="button" class="textlink gauge-reference">雨量站日累计对照</button>' : '') +
+        (!c.atlas && c.event && c.outcome !== c.event.fact ? '<p>' + escape(c.outcome) + '</p>' : '') +
+        '<details class="event-sources"><summary>资料来源</summary>' +
+        (c.method ? '<p>' + escape(c.method) + '</p>' : '') +
+        sources +
+        '</details></div>'
+      : '';
+    if (lesson) {
+      const check = c.event.analysis && lesson.background ? '<p>' + escape(c.event.analysis) + '</p>' : '';
+      const study = lesson.sources.map(([url, name]) => safeLink(url, name)).join(' ');
+      el.innerHTML =
+        '<section class="reading panel"><div class="reading-main"><h2>' +
+        icon('book', 18) +
+        '这次过程有什么特别</h2><p>' +
+        escape(lesson.special) +
+        '</p>' +
+        (c.atlas ? '<p class="atmosphere-reading">' + escape(c.guides[1] || '') + '</p>' : '') +
+        '<h3>资料能说明到哪一步</h3><p>' +
+        escape(lesson.limit) +
+        '</p>' +
+        check +
+        study +
+        '</div>' +
+        evidence +
+        '</section>' +
+        (c.cross ? principle(c.cross) : '');
+    } else {
+      el.innerHTML =
+        '<section class="reading panel"><div class="reading-main"><h2>' +
+        icon('book', 18) +
+        '怎样读天气图</h2>' +
+        [...new Set(reading)].map((s) => '<p>' + escape(s) + '</p>').join('') +
+        compare +
+        '</div></section>';
+    }
     if (c?.atlas) {
       if (shownTime!==null) markReading(el,shownTime);
       $('.gauge-reference',el).onclick=()=>{const t=shownTime??frames[index];pauseAtCurrent();showGaugeReference(c,t,ctx);};
@@ -598,9 +876,19 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (v?.belowGround) return '该气压面位于模式地面或地下';
     if (v && v.value === null) return '此格点缺测';
     if (v?.value != null) {
-      let out = fmtNum(v.value, layer==='omega700'?3:layer==='div200'?2:1) + ' ' + (layerUnit[layer] || '');
-      if(layer==='omega700')out+=' · '+(v.value<0?'上升':v.value>0?'下沉':'接近零');
-      if(layer==='div200')out+=' · '+(v.value>0?'辐散':v.value<0?'辐合':'接近零');
+      if (layer === 'precipPhase')
+        return (
+          phaseNames[v.value] + (v.value === 5 ? '（' + phasesFromFlags(v.phaseMask).join('、') + '）' : '')
+        );
+      let out =
+        fmtNum(
+          v.value,
+          layer.startsWith('omega') || layer.startsWith('flux') ? 3 : layer.startsWith('div') ? 2 : 1,
+        ) +
+        ' ' +
+        (layerUnit[layer] || '');
+      if (layer.startsWith('omega')) out += ' · ' + (v.value < 0 ? '上升' : v.value > 0 ? '下沉' : '接近零');
+      if (layer.startsWith('div')) out += ' · ' + (v.value > 0 ? '辐散' : v.value < 0 ? '辐合' : '接近零');
       if (g.v) {
         const degree = ((Math.atan2(-v.u, -v.v) * 180) / Math.PI + 360) % 360;
         out += ' · 风从 ' + fmtNum(degree) + '° 吹来';
@@ -627,10 +915,18 @@ export async function showMaps({ main, ctx, place, params }, c) {
         return;
       }
       if (!cursor) {
-        el.textContent = g?.pointStatus==='missing' ? '此时次各源未补到选点，周边格点可点读' :
-          g?.pointStatus==='terrain' ? '选点的气压面位于模式地面或地下' :
-          g?.layer==='omega700' ? '负值表示上升，正值表示下沉。点击地图可读数。' :
-          g?.layer==='div200' ? '正值表示辐散，负值表示辐合。点击地图可读数。' : g?.values ? '点击地图读取格点值' : '';
+        el.textContent =
+          g?.pointStatus === 'missing'
+            ? '此时次各源未补到选点，周边格点可点读'
+            : g?.pointStatus === 'terrain'
+              ? '选点的气压面位于模式地面或地下'
+              : g?.layer?.startsWith('omega')
+                ? '负值表示上升，正值表示下沉。点击地图可读数。'
+                : g?.layer?.startsWith('div')
+                  ? '正值表示辐散，负值表示辐合。点击地图可读数。'
+                  : g?.values
+                    ? '点击地图读取格点值'
+                    : '';
         return;
       }
       const v = valueFor(g, layers[i] === 'zonal' ? 'zonal' : g?.layer || layers[i], ...cursor);
@@ -644,6 +940,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
   function mapOptions(i) {
     return {
       bbox,
+      terrain: terrainOn,
+      storms: layers[i] === 'heightWide500' ? caseStorms : null,
       point: cursor || point,
       tag: cursor ? '选点' : showGuide ? c?.tag || place[3] : '',
       annotation: showGuide ? c?.annotation : null,
@@ -678,9 +976,17 @@ export async function showMaps({ main, ctx, place, params }, c) {
   observer.observe(grid, { box: 'device-pixel-content-box' });
   const rulerObserver = new ResizeObserver(([entry]) => {
     rulerWidth = entry.contentRect.width;
-    drawTimeRuler(ruler, frames, stops, rulerWidth);
+    paintTicks();
   });
   rulerObserver.observe(ruler);
+  const nowTimer = c
+    ? null
+    : setInterval(() => {
+        if (!observing && frames.length && rulerWidth) {
+          paintTicks();
+          if (shownTime !== null) displayTime(shownTime);
+        }
+      }, 60000);
   window.addEventListener('resize', resizePlots, { signal: ctx.signal });
   ctx.onClose(() => {
     discardScrub();
@@ -689,6 +995,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
     cancelAnimationFrame(redrawFrame);
     observer.disconnect();
     rulerObserver.disconnect();
+    clearInterval(nowTimer);
     revision++;
     stop();
   });
@@ -696,16 +1003,10 @@ export async function showMaps({ main, ctx, place, params }, c) {
     if (c) return caseFrameUrl(c, layer, t,cursor||point);
     const iso = new Date(t).toISOString();
     if (cmaProducts.has(layer)) return '/api/cma-image?'+new URLSearchParams({product:layer,time:iso});
-    if (layer === 'satellite') {
-      const reg =
-        point[0] >= 115 && point[1] >= 22
-          ? 'jpn'
-          : point[1] >= 25
-            ? 'ca1'
-            : point[0] >= 105
-              ? 'se2'
-              : 'se1';
-      return '/api/satellite?' + new URLSearchParams({ region: 'china', fallback: reg, time: iso });
+    if (isSatellite(layer)) {
+      const q = satelliteParams(layer);
+      q.set('time', iso);
+      return '/api/satellite?' + q;
     }
     if (layer === 'radar') return '/api/radar?time=' + encodeURIComponent(iso);
     if (layer === 'track') return '/api/cyclones';
@@ -724,9 +1025,14 @@ export async function showMaps({ main, ctx, place, params }, c) {
     const url = frameUrl(layer, time, modelRun);
     if (!url) throw Error('该观测时刻没有对应的模式预报');
     const data = await resource(url, group);
-    if (cmaProducts.has(layer) && (data.product!==layer || Date.parse(data.valid)!==time || !data.externalImage))
+    if (
+      cmaProducts.has(layer) &&
+      (data.product !== layer || Date.parse(data.valid) !== time || !data.externalImage)
+    )
       throw Error('原图的产品或时次与选项不符');
-    if (layer === 'track') return { ...data, valid: new Date(time).toISOString(), type: '机构路径', source: '香港天文台' };
+    if (isObservation(layer) && Date.parse(data.valid) !== time) throw Error('观测有效时刻与所选帧不一致');
+    if (isSatellite(layer) && data.channel !== satelliteChannels[layer].code)
+      throw Error('卫星通道与所选产品不一致');
     return data;
   }
   function previewAt(target) {
@@ -765,7 +1071,8 @@ export async function showMaps({ main, ctx, place, params }, c) {
     area.setAttribute('aria-label', panel.getAttribute('aria-label') + (data.externalImage
       ? '原始观测图像'
       : layer === 'zonal' ? '纬向平均气压，点选纬度' : '天气图，点选或方向键读取位置，Shift 加方向键平移'));
-    $('.kind', panel).textContent = data.type || '预报';
+    $('.kind', panel).textContent =
+      !c && !observing && data.run ? modelFrameType(data.run, Date.parse(data.valid)) : data.type || '预报';
     $('.kind',panel).title=pressureGuide(data.layer)||'';
     const valid = data.intervalStart&&data.intervalEnd ? validText(data.intervalStart)+' — '+validText(data.intervalEnd)
       : data.period || (data.type === '卫星日合成' ? data.valid + ' UTC' : validText(data.valid));
@@ -780,6 +1087,7 @@ export async function showMaps({ main, ctx, place, params }, c) {
       data.terrainReference && '同时参考 ' + data.terrainReference + ' 地形',
     ].filter(Boolean).join(' · ') : [data.source,data.type,data.channel,data.resolution&&'资料网格 '+data.resolution,data.step&&'显示格距 '+data.step+'°'].filter(Boolean).join(' · ');
     if(data.selectionPressure!=null)src.title+=' · 选点模式地面气压 '+fmtNum(data.selectionPressure,1)+' hPa '+selectionNote(data.autoRole,data.selectionPressure,data.layer);
+    if(data.partial)src.title+=' · 部分边缘区域缺测';
     if(data.derived)src.title+=' · '+data.derived;
     if (data.sourceRuns) {
       const runs=[...new Set(data.sourceRuns)].map(t=>validText(t)).join('、');
@@ -793,6 +1101,16 @@ export async function showMaps({ main, ctx, place, params }, c) {
     scale.replaceChildren();
     if (scaleKey) {
       const l = legend(data.layer);
+      if (data.layer === 'precipPhase') {
+        const colors = ['#2e3f4d', '#5ba97c', '#cd6695', '#b892d4', '#9aceeb', '#dbab61'];
+        scale.innerHTML = phaseNames
+          .map(
+            (name, i) =>
+              '<span class="phase-key" style="--phase:' + colors[i] + '">' + (i ? name : '无') + '</span>',
+          )
+          .join('');
+        return;
+      }
       scale.innerHTML = `<span>${l.low}</span><i style="background:${l.gradient}"></i><span>${l.high} ${l.unit}</span>`;
       if (terrain) scale.insertAdjacentHTML('beforeend', '<span class="terrain-key">地形遮挡</span>');
     }
@@ -918,6 +1236,20 @@ export async function showMaps({ main, ctx, place, params }, c) {
       frameTime.textContent = frameLabel(time) + ' · 北京时间';
       if(c?.atlas)markReading(main,time);
     }
+    if (!c && !observing && run) {
+      const f = forecastFrame(run, time);
+      const category = modelFrameType(f.run, time);
+      modelMeta.textContent =
+        category +
+        ' · 起报 ' +
+        validText(f.run) +
+        ' 北京时（' +
+        f.run.slice(5, 10).replace('-', '/') + ' ' + f.run.slice(11, 13) +
+        ' UTC） · 时效 +' +
+        f.lead +
+        ' h';
+    }
+    if (observing) profileButton.disabled = true;
     shownTime = time;
     readChartPressure(time);
     if (time === frames[index]) clearSeekStatus();
@@ -1021,14 +1353,15 @@ export async function showMaps({ main, ctx, place, params }, c) {
   }
   async function refreshView() {
     if (!frames.length) {
-      if (observing&&visibleLayers().some(key=>cmaProducts.has(key))) {
-        showPending(visibleLayers(),'读取观测时次…');
+      if (observing) {
+        showPending(visibleLayers(), '读取观测时次…');
         if (observationError) {
           for (const p of panels) {
-            const msg=$('.map-message',p);
-            msg.className='map-message show';
-            msg.innerHTML='<span>'+escape(observationError.message)+'</span><button class="btn">重试</button>';
-            $('button',msg).onclick=()=>void setMode(true);
+            const msg = $('.map-message', p);
+            msg.className = 'map-message show';
+            msg.innerHTML =
+              '<span>' + escape(observationError.message) + '</span><button class="btn">重试</button>';
+            $('button', msg).onclick = () => void setMode(true);
           }
         }
         return;
@@ -1344,7 +1677,11 @@ export async function showMaps({ main, ctx, place, params }, c) {
     }
     if (observing) return;
   }
-  const initialFrame = refreshView();
+  const evidenceParam = params.get('evidence');
+  const initialFrame =
+    lesson && evidenceParam !== null && /^\d+$/.test(evidenceParam) && lesson.steps[Number(evidenceParam)]
+      ? applyEvidence(Number(evidenceParam))
+      : refreshView();
   if (c?.id === 'bohai') {
     localArchive = await resource('/assets/cases/' + c.id + '/local.json');
     if (!ctx.active) return;

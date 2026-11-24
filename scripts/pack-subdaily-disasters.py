@@ -156,7 +156,7 @@ def pack_month(cache, out, month, hours):
     write_month(out, month, hours, lambda h: convert(fields, h), ORDER, MAGIC)
 
 
-def write_month(out, month, hours, frame_at, order, magic, source_meta=None):
+def write_month(out, month, hours, frame_at, order, magic, source_meta=None, cadence=CADENCE):
     start = utc_hour(month + "-01")
     blocks = []
     offset = 0
@@ -173,7 +173,7 @@ def write_month(out, month, hours, frame_at, order, magic, source_meta=None):
             for key in order:
                 data[key].append(frame[key])
             leads.append(reference)
-            mask |= 1 << ((h % 24) // CADENCE)
+            mask |= 1 << ((h % 24) // cadence)
         block = encode(data, leads, order, "zlib" if magic == MAGIC else "zstd")
         entries[str(day + 1)] = [offset, len(block), mask]
         if magic != MAGIC:
@@ -184,7 +184,7 @@ def write_month(out, month, hours, frame_at, order, magic, source_meta=None):
         {
             "version": 1,
             "month": month,
-            "cadence": CADENCE,
+            "cadence": cadence,
             "days": entries,
             **({"codec": "zstd"} if magic != MAGIC else {}),
             **(source_meta or {}),

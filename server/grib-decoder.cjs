@@ -14,6 +14,11 @@ const parameters = {
   PRES: [3, 0],
   PRATE: [1, 7],
   CSNOW: [1, 195],
+  CRAIN: [1, 192],
+  CFRZR: [1, 193],
+  CICEP: [1, 194],
+  APCP: [1, 8],
+  PWAT: [1, 3],
 };
 let engine;
 function decoder() {
@@ -31,9 +36,16 @@ function checkMessage(h, entry, run, lead, source) {
   if (
     time('dataDate', 'dataTime') !== stamp(run) ||
     time('validityDate', 'validityTime') !== stamp(new Date(run).getTime() + lead * 36e5) ||
-    h.getString('stepType') !== 'instant'
+    h.getString('stepType') !== (entry.field === 'APCP' ? 'accum' : 'instant')
   )
     throw Error('GRIB 时次或统计时段不匹配');
+  if (
+    entry.field === 'APCP' &&
+    (h.getLong('startStep') !== 0 ||
+      h.getLong('endStep') !== lead ||
+      !['1', 'h'].includes(h.getString('stepUnits')))
+  )
+    throw Error('GRIB 降水累计窗口与起报时间不符');
   const param =
     entry.field === 'PRMSL' ? [3, source.model === 'ifs' ? 0 : 1] : parameters[entry.field];
   if (
@@ -46,12 +58,12 @@ function checkMessage(h, entry, run, lead, source) {
   const level = entry.level,
     type = h.getString('typeOfLevel');
   if (
-    (level.endsWith(' mb') &&
-      (type !== 'isobaricInhPa' || h.getLong('level') !== parseInt(level, 10))) ||
+    (level.endsWith(' mb') && (type !== 'isobaricInhPa' || h.getLong('level') !== parseInt(level, 10))) ||
     (level.includes('above ground') &&
       (type !== 'heightAboveGround' || h.getLong('level') !== parseInt(level, 10))) ||
     (level === 'surface' && type !== 'surface') ||
-    (level === 'mean sea level' && type !== 'meanSea')
+    (level === 'mean sea level' && type !== 'meanSea') ||
+    (entry.field === 'PWAT' && !['atmosphereSingleLayer', 'entireAtmosphere', 'atmosphere'].includes(type))
   )
     throw Error('GRIB 垂直层与索引不匹配');
   if (source.model === 'gefs' && h.getLong('perturbationNumber') !== 0)
@@ -100,7 +112,14 @@ function decode(ec, source, run, lead, entry, bytes, bbox, step) {
         if (entry.field === 'TMP' || entry.field === 'DPT') v -= 273.15;
         if (entry.field === 'PRES' || entry.field === 'PRMSL') v /= 100;
         if (entry.field === 'PRATE') v *= 3600;
-        const precision = entry.field === 'SPFH' ? 1e7 : entry.field === 'VVEL' ? 1000 : entry.field === 'PRATE' ? 100 : 10;
+        const precision =
+          entry.field === 'SPFH'
+            ? 1e7
+            : entry.field === 'VVEL'
+              ? 1000
+              : ['PRATE', 'APCP', 'PWAT'].includes(entry.field)
+                ? 100
+                : 10;
         out.push(
           Math.abs(v) < 20000 && (entry.field !== 'PRES' || (v >= 250 && v <= 1100))
             ? Math.round(v * precision) / precision

@@ -62,15 +62,22 @@ export function cmaGuide(p,reference=null) {
   }
   return guide;
 }
-export async function sharedObservationTimes(keys,request) {
-  const delayed=new Map();
-  const lists=await Promise.all(keys.map(async key=>{
-    const data=await request(cmaProducts.has(key)?'/api/cma-times?product='+encodeURIComponent(key):'/api/'+key+'-times');
-    if (cmaProducts.has(key)&&data.product!==key) throw Error('原图时次与所选产品不符');
-    if (data.delayed && Number.isFinite(Date.parse(data.latest))) delayed.set(key,data.latest);
-    return new Set((data.frames||[]).map(f=>Date.parse(f.time)).filter(Number.isFinite));
-  }));
-  const times=[...lists[0]].filter(t=>lists.every(s=>s.has(t))).sort((a,b)=>a-b);
-  if (!times.length) throw Error(keys.length>1?'这些图层暂无共同观测时次，可切回单图或更换图层。':'该产品暂无可回放的观测时次。');
-  return {times,delayed};
+export async function sharedObservationTimes(keys, request, urlFor = (key) => '/api/' + key + '-times') {
+  const delayed = new Map();
+  const lists = await Promise.all(
+    keys.map(async (key) => {
+      const data = await request(
+        cmaProducts.has(key) ? '/api/cma-times?product=' + encodeURIComponent(key) : urlFor(key),
+      );
+      if (cmaProducts.has(key) && data.product !== key) throw Error('原图时次与所选产品不符');
+      if (data.delayed && Number.isFinite(Date.parse(data.latest))) delayed.set(key, data.latest);
+      return new Set((data.frames || []).map((f) => Date.parse(f.time)).filter(Number.isFinite));
+    }),
+  );
+  const times = [...lists[0]].filter((t) => lists.every((s) => s.has(t))).sort((a, b) => a - b);
+  if (!times.length)
+    throw Error(
+      keys.length > 1 ? '这些图层暂无共同观测时次，可切回单图或更换图层。' : '该产品暂无可回放的观测时次。',
+    );
+  return { times, delayed };
 }

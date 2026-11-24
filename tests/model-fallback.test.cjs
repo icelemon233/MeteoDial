@@ -215,7 +215,7 @@ test('起报探测本身也能切到后备源，已知缺批次时可探测上�
   });
   assert.equal(Date.parse(prior.run), Date.parse(run) - 6 * 36e5);
 });
-test('0.3.0 同批 GFS 缓存升级后仍可离线读出，后备源有独立缓存', async () => {
+test('0.3.0 同批 GFS 缓存升级后仍可离线读出，后备源有独立缓存', async (t) => {
   const fs = require('node:fs/promises'),
     path = require('node:path'),
     os = require('node:os'),
@@ -225,6 +225,9 @@ test('0.3.0 同批 GFS 缓存升级后仍可离线读出，后备源有独立缓
   const folder = await fs.mkdtemp(path.join(os.tmpdir(), 'meteodial-upgrade-grids-'));
   configureCache(folder);
   let reads = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    throw Error('offline');
+  });
   configureTransport(async () => {
     reads++;
     throw Error('offline');
